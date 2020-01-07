@@ -673,7 +673,7 @@ pci_emul_alloc_bar(struct pci_devinst *pdi, int idx, enum pcibar_type type,
 }
 
 #define	CAP_START_OFFSET	0x40
-static int
+int
 pci_emul_add_capability(struct pci_devinst *pi, u_char *capdata, int caplen)
 {
 	int i, capoff, reallen;

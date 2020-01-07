@@ -158,6 +158,69 @@ struct vring_used {
 /*	uint16_t	vu_avail_event;	-- after N ring entries */
 } __packed;
 
+#define VIRTIO_PCI_CAP_COMMON_CFG	1	/* Common configuration cap */
+#define VIRTIO_PCI_CAP_NOTIFY_CFG	2	/* Notification cap */
+#define VIRTIO_PCI_CAP_ISR_CFG		3	/* ISR cap */
+#define VIRTIO_PCI_CAP_DEVICE_CFG	4	/* Device-specific configuration cap */
+#define VIRTIO_PCI_CAP_PCI_CFG		5	/* Legacy configuation cap */
+
+/* Refer to struct virtio_pci_cap */
+struct virtio_pci_cap {
+	uint8_t		c_capid;		/* has to be PCIY_VENDOR */
+	uint8_t		c_nextptr;
+	uint8_t		c_caplen;
+	uint8_t		c_cfgtype;
+	uint8_t		c_bar;		/* bar index of the structure */
+	uint8_t		c_padding[3];
+	uint32_t	c_offset;		/* beginning offset at specified bar index */
+	uint32_t	c_length;		/* length of the structure */
+} __packed;
+static_assert(sizeof(struct virtio_pci_cap) == 16, "compile-time assertion failed");
+
+/*
+ * Queue notify address can be derived by the formula:
+ * 	nc_cap.c_offset + nc_cap.c_queue_notify_off * nc_notify_off_mult
+ */
+struct virtio_pci_notify_cap {
+	struct virtio_pci_cap	nc_cap;
+	uint32_t				nc_notify_off_mult;
+} __packed;
+static_assert(sizeof(struct virtio_pci_notify_cap) == 20, "compile-time assertion failed");
+
+struct virtio_pci_cfg_cap {
+	struct virtio_pci_cap	cc_cap;
+	uint8_t					cc_cfg_data[4];
+} __packed;
+static_assert(sizeof(struct virtio_pci_cfg_cap) == 20, "compile-time assertion failed");
+
+/*
+ * Configuration registers for virtio 1.0 and later
+ */
+struct virtio_pci_common_cfg {
+	uint32_t	c_device_feature_select;	/* RW */
+	uint32_t	c_device_feature;			/* R */
+	uint32_t	c_driver_feature_select;	/* RW */
+	uint32_t	c_driver_feature;			/* RW */
+	uint16_t	c_msix_config;				/* RW */
+	uint16_t	c_num_queues;				/* R */
+	uint8_t		c_device_status;			/* RW */
+	uint8_t		c_config_generation;		/* R */
+
+	/* About a specific virtqueue. */
+	uint16_t	c_queue_select;				/* RW */
+	uint16_t	c_queue_size;				/* RW, power of 2 or 0 */
+	uint16_t	c_queue_msix_vector;		/* RW */
+	uint16_t	c_queue_enable;				/* RW */
+	uint16_t	c_queue_notify_off;			/* R */
+	uint32_t	c_queue_desc_low;				/* RW */
+	uint32_t	c_queue_desc_high;				/* RW */
+	uint32_t	c_queue_avail_low;				/* RW */
+	uint32_t	c_queue_avail_high;				/* RW */
+	uint32_t	c_queue_used_low;				/* RW */
+	uint32_t	c_queue_used_high;				/* RW */
+} __packed;
+static_assert(sizeof(struct virtio_pci_common_cfg) == 56, "compile-time assertion failed");
+
 /*
  * The address of any given virtual queue is determined by a single
  * Page Frame Number register.  The guest writes the PFN into the
@@ -246,7 +309,9 @@ struct vring_used {
  */
 #define	VTCFG_STATUS_ACK	0x01	/* guest OS has acknowledged dev */
 #define	VTCFG_STATUS_DRIVER	0x02	/* guest OS driver is loaded */
-#define	VTCFG_STATUS_DRIVER_OK	0x04	/* guest OS driver ready */
+#define	VTCFG_STATUS_DRIVER_OK		0x04	/* guest OS driver ready */
+#define VTCFG_STATUS_FEATURES_OK	0x08	/* feature negotiation completes */
+#define VTCFG_STATUS_DEVICE_NEEDS_RESET	0x40	/* device should be reset */
 #define	VTCFG_STATUS_FAILED	0x80	/* guest has given up on this dev */
 
 /*
@@ -266,6 +331,7 @@ struct vring_used {
 #define	VIRTIO_F_NOTIFY_ON_EMPTY	(1 << 24)
 #define	VIRTIO_RING_F_INDIRECT_DESC	(1 << 28)
 #define	VIRTIO_RING_F_EVENT_IDX		(1 << 29)
+#define VIRTIO_F_VERSION_1			(1ull << 32)
 
 /* From section 2.3, "Virtqueue Configuration", of the virtio specification */
 static inline size_t
@@ -321,18 +387,34 @@ struct vqueue_info;
 #define	VIRTIO_USE_MSIX		0x01
 #define	VIRTIO_EVENT_IDX	0x02	/* use the event-index values */
 #define	VIRTIO_BROKED		0x08	/* ??? */
+#define	VIRTIO_HOSTCAP_SELECT_HIGH	0x10	/* return high-part of host cap */
+#define	VIRTIO_GUESTCAP_SELECT_HIGH	0x20	/* return high-part of guest cap */
+
+struct virtio_cfg_entry {
+	int				ce_captype;
+	int				ce_baridx;
+	uint64_t		ce_offset;
+	size_t 			ce_size;
+};
 
 struct virtio_softc {
 	struct virtio_consts *vs_vc;	/* constants (see below) */
 	int	vs_flags;		/* VIRTIO_* flags from above */
 	pthread_mutex_t *vs_mtx;	/* POSIX mutex, if any */
 	struct pci_devinst *vs_pi;	/* PCI device instance */
-	uint32_t vs_negotiated_caps;	/* negotiated capabilities */
+	uint64_t vs_negotiated_caps;	/* negotiated capabilities */
 	struct vqueue_info *vs_queues;	/* one per vc_nvq */
 	int	vs_curq;		/* current queue */
 	uint8_t	vs_status;		/* value from last status write */
 	uint8_t	vs_isr;			/* ISR flags, if not MSI-X */
-	uint16_t vs_msix_cfg_idx;	/* MSI-X vector for config event */
+	uint16_t	vs_msix_cfg_idx;	/* MSI-X vector for config event */
+	uint16_t	vs_notify_cfg_mult;	/* Multiplier of notification area offset */
+	uint8_t		vs_devcfg_gen;
+	struct virtio_cfg_entry	vs_comm_cfg;
+	struct virtio_cfg_entry	vs_notify_cfg;
+	struct virtio_cfg_entry	vs_isr_cfg;
+	struct virtio_cfg_entry	vs_dev_cfg;
+	struct virtio_cfg_entry	vs_pci_cfg;
 };
 
 #define	VS_LOCK(vs)							\
@@ -382,6 +464,7 @@ struct virtio_consts {
  */
 #define	VQ_ALLOC	0x01	/* set once we have a pfn */
 #define	VQ_BROKED	0x02	/* ??? */
+#define	VQ_ENABLED	0x04	/* set if the queue was enabled */
 struct vqueue_info {
 	uint16_t vq_qsize;	/* size of this queue (a power of 2) */
 	void	(*vq_notify)(void *, struct vqueue_info *);
@@ -396,7 +479,16 @@ struct vqueue_info {
 	uint16_t vq_save_used;	/* saved vq_used->vu_idx; see vq_endchains */
 	uint16_t vq_msix_idx;	/* MSI-X index, or VIRTIO_MSI_NO_VECTOR */
 
-	uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
+	union {
+		struct {
+			uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
+		} vq_legacy;
+		struct {
+			uint64_t vq_desc_paddr;	/* PA of virt queue descriptors ring */
+			uint64_t vq_avail_paddr;	/* PA of virt queue avail ring */
+			uint64_t vq_used_paddr;	/* PA of virt queue used ring */
+		} vq_1x;
+	};
 
 	volatile struct virtio_desc *vq_desc;	/* descriptor array */
 	volatile struct vring_avail *vq_avail;	/* the "avail" ring */
@@ -438,12 +530,37 @@ vq_has_descs(struct vqueue_info *vq)
 static inline void
 vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 {
+	if (!(vs->vs_status & VTCFG_STATUS_DRIVER_OK))
+		return;
 
 	if (pci_msix_enabled(vs->vs_pi))
 		pci_generate_msix(vs->vs_pi, vq->vq_msix_idx);
 	else {
 		VS_LOCK(vs);
 		vs->vs_isr |= VTCFG_ISR_QUEUES;
+		pci_generate_msi(vs->vs_pi, 0);
+		pci_lintr_assert(vs->vs_pi);
+		VS_UNLOCK(vs);
+	}
+}
+
+/*
+ * Deliver an interrupt to guest on device-specific configuration changes
+ * (if possible, or a generic MSI interrupt if not using MSI-X).
+ */
+static inline void
+vq_interrupt_devcfg(struct virtio_softc *vs)
+{
+	if (!(vs->vs_status & VTCFG_STATUS_DRIVER_OK))
+		return;
+
+	vs->vs_devcfg_gen++;
+
+	if (pci_msix_enabled(vs->vs_pi))
+		pci_generate_msix(vs->vs_pi, vs->vs_msix_cfg_idx);
+	else {
+		VS_LOCK(vs);
+		vs->vs_isr |= VTCFG_ISR_CONF_CHANGED;
 		pci_generate_msi(vs->vs_pi, 0);
 		pci_lintr_assert(vs->vs_pi);
 		VS_UNLOCK(vs);
@@ -477,7 +594,10 @@ void	vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
 int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
 void	vi_reset_dev(struct virtio_softc *);
 void	vi_set_io_bar(struct virtio_softc *, int);
+void	vi_1x_set_io_bar(struct virtio_softc *, int);
 
+int	vq_getchain_rw(struct vqueue_info *vq, uint16_t *pidx, int *n_wiov,
+		    struct iovec *iov, int n_iov, uint16_t *flags);
 int	vq_getchain(struct vqueue_info *vq, uint16_t *pidx,
 		    struct iovec *iov, int n_iov, uint16_t *flags);
 void	vq_retchains(struct vqueue_info *vq, uint16_t n_chains);
@@ -490,5 +610,10 @@ void	vq_endchains(struct vqueue_info *vq, int used_all_avail);
 uint64_t vi_pci_read(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 		     int baridx, uint64_t offset, int size);
 void	vi_pci_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+		     int baridx, uint64_t offset, int size, uint64_t value);
+
+uint64_t vi_1x_pci_read(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+		     int baridx, uint64_t offset, int size);
+void	vi_1x_pci_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 		     int baridx, uint64_t offset, int size, uint64_t value);
 #endif	/* _VIRTIO_H_ */
