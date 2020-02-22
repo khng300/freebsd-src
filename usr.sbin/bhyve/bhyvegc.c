@@ -35,6 +35,8 @@ __FBSDID("$FreeBSD$");
 #include <stdio.h>
 #include <string.h>
 
+#include <pthread.h>
+
 #include "bhyvegc.h"
 
 struct bhyvegc {
@@ -62,6 +64,14 @@ bhyvegc_init(int width, int height, void *fbaddr)
 	}
 
 	gc->gc_image = gc_image;
+
+	pthread_mutex_init(&gc_image->cursor_mtx, NULL);
+	gc_image->cursor_size = 64 * 64 * 4;
+	gc_image->cursor_data = calloc(1, gc_image->cursor_size);
+	gc_image->cursor_width = 64;
+	gc_image->cursor_height = 64;
+	gc_image->cursor_x = 0;
+	gc_image->cursor_y = 0;
 
 	return (gc);
 }

@@ -99,6 +99,9 @@ struct rfb_softc {
 	bool	enc_raw_ok;
 	bool	enc_zlib_ok;
 	bool	enc_resize_ok;
+	bool	enc_pointerpos_ok;
+	bool	enc_richcursor_ok;
+	bool	enc_alphacursor_ok;
 
 	z_stream	zstream;
 	uint8_t		*zbuf;
@@ -145,6 +148,9 @@ struct rfb_pixfmt_msg {
 #define	RFB_ENCODING_RAW		0
 #define	RFB_ENCODING_ZLIB		6
 #define	RFB_ENCODING_RESIZE		-223
+#define	RFB_ENCODING_RICHCURSOR		0xFFFFFF11
+#define	RFB_ENCODING_POINTERPOS		0xFFFFFF18
+#define	RFB_ENCODING_ALPHACURSOR	-319
 
 #define	RFB_MAX_WIDTH			2000
 #define	RFB_MAX_HEIGHT			1200
@@ -283,6 +289,15 @@ rfb_recv_set_encodings_msg(struct rfb_softc *rc, int cfd)
 		case RFB_ENCODING_RESIZE:
 			rc->enc_resize_ok = true;
 			break;
+		case RFB_ENCODING_RICHCURSOR:
+			rc->enc_richcursor_ok = true;
+			break;
+		case RFB_ENCODING_POINTERPOS:
+			rc->enc_pointerpos_ok = true;
+			break;
+		case RFB_ENCODING_ALPHACURSOR:
+			rc->enc_alphacursor_ok = true;
+			break;
 		}
 	}
 }
@@ -308,6 +323,172 @@ fast_crc32(void *buf, int len, uint32_t crcval)
 	return (crcval);
 }
 
+
+static int
+rfb_send_cursor_pos(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc)
+{
+	struct rfb_srvr_updt_msg supdt_msg;
+	struct rfb_srvr_rect_hdr srect_hdr;
+	ssize_t nwrite;
+
+	/*
+	 * Send a single rectangle of the given x, y, w h dimensions.
+	 */
+
+	/* Number of rectangles: 1 */
+	supdt_msg.type = 0;
+	supdt_msg.pad = 0;
+	supdt_msg.numrects = htons(1);
+	nwrite = stream_write(cfd, &supdt_msg,
+	                      sizeof(struct rfb_srvr_updt_msg));
+	if (nwrite <= 0)
+		return (nwrite);
+
+	/* Rectangle header */
+	pthread_mutex_lock(&gc->cursor_mtx);
+	srect_hdr.x = htons(gc->cursor_x);
+	srect_hdr.y = htons(gc->cursor_y);
+	pthread_mutex_unlock(&gc->cursor_mtx);
+	srect_hdr.width = srect_hdr.height = 0;
+	srect_hdr.encoding = htonl(RFB_ENCODING_POINTERPOS);
+	nwrite = stream_write(cfd, &srect_hdr,
+	                      sizeof(struct rfb_srvr_rect_hdr));
+
+	return (nwrite);
+}
+
+static int
+rfb_send_alpha_cursor_shape(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc)
+{
+	struct rfb_srvr_updt_msg supdt_msg;
+	struct rfb_srvr_rect_hdr srect_hdr;
+	ssize_t nwrite;
+	void *curdata;
+	uint32_t encoding;
+	bool enabled;
+
+	enabled = gc->cursor_enabled;
+	if (!enabled)
+		return 0;
+
+	/*
+	 * Send a single rectangle of the given x, y, w h dimensions.
+	 */
+
+	/* Number of rectangles: 1 */
+	supdt_msg.type = 0;
+	supdt_msg.pad = 0;
+	supdt_msg.numrects = htons(1);
+	nwrite = stream_write(cfd, &supdt_msg,
+	                      sizeof(struct rfb_srvr_updt_msg));
+	if (nwrite <= 0)
+		return (nwrite);
+
+	/* Rectangle header */
+	pthread_mutex_lock(&gc->cursor_mtx);
+	srect_hdr.x = htons(gc->cursor_hot_x);
+	srect_hdr.y = htons(gc->cursor_hot_y);
+	pthread_mutex_unlock(&gc->cursor_mtx);
+	srect_hdr.width = htons(gc->cursor_width);
+	srect_hdr.height = htons(gc->cursor_height);
+	srect_hdr.encoding = htonl(RFB_ENCODING_ALPHACURSOR);
+	nwrite = stream_write(cfd, &srect_hdr,
+	                      sizeof(struct rfb_srvr_rect_hdr));
+	if (nwrite <= 0)
+		return (nwrite);
+
+	encoding = htonl(RFB_ENCODING_RAW);
+	nwrite = stream_write(cfd, &encoding, 4);
+	if (nwrite <= 0)
+		return (nwrite);
+
+	curdata = malloc(gc->cursor_size);
+	pthread_mutex_lock(&gc->cursor_mtx);
+	memcpy(curdata, gc->cursor_data, gc->cursor_size);
+	pthread_mutex_unlock(&gc->cursor_mtx);
+	nwrite = stream_write(cfd, curdata, gc->cursor_size);
+	free(curdata);
+
+	return (nwrite);
+}
+
+static int
+rfb_send_cursor_shape(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc)
+{
+	struct rfb_srvr_updt_msg supdt_msg;
+	struct rfb_srvr_rect_hdr srect_hdr;
+	ssize_t nwrite;
+	uint32_t *curdata;
+	unsigned int scanlinelen;
+	uint8_t *curmask;
+	size_t curmasklen;
+	bool enabled;
+	unsigned int i, j;
+
+	enabled = gc->cursor_enabled;
+	if (!enabled)
+		return 0;
+
+	/*
+	 * Send a single rectangle of the given x, y, w h dimensions.
+	 */
+
+	/* Number of rectangles: 1 */
+	supdt_msg.type = 0;
+	supdt_msg.pad = 0;
+	supdt_msg.numrects = htons(1);
+	nwrite = stream_write(cfd, &supdt_msg,
+	                      sizeof(struct rfb_srvr_updt_msg));
+	if (nwrite <= 0)
+		return (nwrite);
+
+	/* Rectangle header */
+	pthread_mutex_lock(&gc->cursor_mtx);
+	srect_hdr.x = htons(gc->cursor_hot_x);
+	srect_hdr.y = htons(gc->cursor_hot_y);
+	pthread_mutex_unlock(&gc->cursor_mtx);
+	srect_hdr.width = htons(gc->cursor_width);
+	srect_hdr.height = htons(gc->cursor_height);
+	srect_hdr.encoding = htonl(RFB_ENCODING_RICHCURSOR);
+	nwrite = stream_write(cfd, &srect_hdr,
+	                      sizeof(struct rfb_srvr_rect_hdr));
+	if (nwrite <= 0)
+		return (nwrite);
+
+	curdata = malloc(gc->cursor_size);
+	pthread_mutex_lock(&gc->cursor_mtx);
+	memcpy(curdata, gc->cursor_data, gc->cursor_size);
+	pthread_mutex_unlock(&gc->cursor_mtx);
+
+	scanlinelen = (gc->cursor_width + 7) / 8;
+	curmasklen = scanlinelen * gc->cursor_height;
+	curmask = calloc(1, curmasklen);
+	for (i = 0; i < gc->cursor_height; i++) {
+		unsigned int baseoff = i * scanlinelen;
+
+		for (j = 0; j < gc->cursor_width; j++) {
+			size_t doff = i * gc->cursor_width + j;
+			uint8_t bitmask = 1 << (7 - j % 8);
+			uint8_t *color =
+			    (uint8_t *)&curdata[doff];
+
+			if (color[3] >= 0x100*4/5)
+				curmask[baseoff + j / 8] |= bitmask;
+		}
+	}
+
+	nwrite = stream_write(cfd, curdata, gc->cursor_size);
+	if (nwrite <= 0)
+		goto done;
+
+	nwrite = stream_write(cfd, curmask,
+	                      curmasklen);
+
+done:
+	free(curdata);
+	free(curmask);
+	return (nwrite);
+}
 
 static int
 rfb_send_rect(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc,
@@ -652,6 +833,12 @@ rfb_recv_update_msg(struct rfb_softc *rc, int cfd, int discardonly)
 		return;
 
 	rfb_send_screen(rc, cfd, 1);
+	if (rc->enc_pointerpos_ok)
+		rfb_send_cursor_pos(rc, cfd, gc_image);
+	if (rc->enc_alphacursor_ok)
+		rfb_send_alpha_cursor_shape(rc, cfd, gc_image);
+	else if (rc->enc_richcursor_ok)
+		rfb_send_cursor_shape(rc, cfd, gc_image);
 }
 
 static void
@@ -706,12 +893,14 @@ rfb_wr_thr(void *arg)
 	fd_set rfds;
 	struct timeval tv;
 	struct timeval prev_tv;
+	struct bhyvegc_image *gc_image;
 	int64_t tdiff;
 	int cfd;
 	int err;
 
 	rc = arg;
 	cfd = rc->cfd;
+	gc_image = console_get_image();
 
 	prev_tv.tv_sec = 0;
 	prev_tv.tv_usec = 0;
@@ -734,6 +923,12 @@ rfb_wr_thr(void *arg)
 			if (rfb_send_screen(rc, cfd, 0) <= 0) {
 				return (NULL);
 			}
+			if (rc->enc_pointerpos_ok)
+				rfb_send_cursor_pos(rc, cfd, gc_image);
+			if (rc->enc_alphacursor_ok)
+				rfb_send_alpha_cursor_shape(rc, cfd, gc_image);
+			else if (rc->enc_richcursor_ok)
+				rfb_send_cursor_shape(rc, cfd, gc_image);
 		} else {
 			/* sleep */
 			usleep(40000 - tdiff);
@@ -763,6 +958,8 @@ rfb_handle(struct rfb_softc *rc, int cfd)
 	uint32_t sres = 0;
 	int len;
 	int perror = 1;
+
+	struct bhyvegc_image *gc_image;
 
 	rc->cfd = cfd;
 
@@ -871,6 +1068,13 @@ rfb_handle(struct rfb_softc *rc, int cfd)
 	}
 
 	rfb_send_screen(rc, cfd, 1);
+	gc_image = console_get_image();
+	if (rc->enc_pointerpos_ok)
+		rfb_send_cursor_pos(rc, cfd, gc_image);
+	if (rc->enc_alphacursor_ok)
+		rfb_send_alpha_cursor_shape(rc, cfd, gc_image);
+	else if (rc->enc_richcursor_ok)
+		rfb_send_cursor_shape(rc, cfd, gc_image);
 
 	perror = pthread_create(&tid, NULL, rfb_wr_thr, rc);
 	if (perror == 0)
@@ -937,6 +1141,9 @@ rfb_thr(void *arg)
 		rc->enc_raw_ok = false;
 		rc->enc_zlib_ok = false;
 		rc->enc_resize_ok = false;
+		rc->enc_pointerpos_ok = false;
+		rc->enc_richcursor_ok = false;
+		rc->enc_alphacursor_ok = false;
 
 		cfd = accept(rc->sfd, NULL, NULL);
 		if (rc->conn_wait) {

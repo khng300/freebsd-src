@@ -38,6 +38,17 @@ struct bhyvegc_image {
 	int		width;
 	int		height;
 	uint32_t	*data;
+
+	int		cursor_width;
+	int		cursor_height;
+	uint32_t	*cursor_data;
+	size_t		cursor_size;
+	unsigned int	cursor_x;
+	unsigned int	cursor_y;
+	unsigned int	cursor_hot_x;
+	unsigned int	cursor_hot_y;
+	unsigned int	cursor_enabled;
+	pthread_mutex_t	cursor_mtx;
 };
 
 struct bhyvegc *bhyvegc_init(int width, int height, void *fbaddr);

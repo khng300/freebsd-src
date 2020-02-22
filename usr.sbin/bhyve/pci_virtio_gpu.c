@@ -551,6 +551,8 @@ struct vtgpu_cursor {
 	struct vtgpu_tex	vgc_gltex;
 	unsigned int		vgc_x;
 	unsigned int		vgc_y;
+	unsigned int		vgc_hot_x;
+	unsigned int		vgc_hot_y;
 };
 
 /*
@@ -615,6 +617,7 @@ struct pci_vtgpu_softc {
 
 	/* Graphics console image */
 	struct bhyvegc_image *	vgsc_gcimage;
+	GLuint			vgsc_cursorpbo;
 
 	/* Running instance linked list */
 	LIST_ENTRY(pci_vtgpu_softc)	vgsc_link;
@@ -1723,13 +1726,15 @@ static void
 pci_vtgpu_cmd_update_cursor(struct pci_vtgpu_worker *worker,
 	    struct pci_vtgpu_ctrl_cmd *cmd)
 {
+	struct pci_vtgpu_softc *sc = worker->w_sc;
 	struct vtgpu_update_cursor *in;
 	struct virgl_renderer_resource_info info;
 	struct bhyvegc_image *gcimage;
 	struct vtgpu_fb fromfb, tofb;
 
 	in = cmd->c_cmdbuf;
-	gcimage = worker->w_sc->vgsc_gcimage;
+	gcimage = sc->vgsc_gcimage;
+
 	memset(&fromfb, 0, sizeof(struct vtgpu_fb));
 	memset(&tofb, 0, sizeof(struct vtgpu_fb));
 
@@ -1737,6 +1742,10 @@ pci_vtgpu_cmd_update_cursor(struct pci_vtgpu_worker *worker,
 		glDeleteTextures(1,
 		    &worker->w_guest_cursor.vgc_gltex.vgt_resid);
 		pci_vtgpu_tex_clear(&worker->w_guest_cursor.vgc_gltex);
+		glDeleteBuffers(1, &sc->vgsc_cursorpbo);
+		sc->vgsc_cursorpbo = 0;
+
+		atomic_store_int(&gcimage->cursor_enabled, 0);
 
 		return;
 	}
@@ -1756,9 +1765,9 @@ pci_vtgpu_cmd_update_cursor(struct pci_vtgpu_worker *worker,
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 		pci_vtgpu_tex_init(&worker->w_guest_cursor.vgc_gltex,
-				tex, info.width, info.height,
-				info.flags & VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP,
-				false);
+		    tex, info.width, info.height,
+		    info.flags & VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP,
+		    false);
 	}
 
 	pci_vtgpu_fb_init(&fromfb,
@@ -1768,26 +1777,57 @@ pci_vtgpu_cmd_update_cursor(struct pci_vtgpu_worker *worker,
 	    worker->w_guest_cursor.vgc_gltex.vgt_resid,
 	    info.width, info.height, false, false);
 
+	if (!sc->vgsc_cursorpbo) {
+		glGenBuffers(1, &sc->vgsc_cursorpbo);
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, sc->vgsc_cursorpbo);
+		glBufferData(GL_PIXEL_PACK_BUFFER,
+		    info.width * info.height * sizeof(uint32_t),
+		    NULL, GL_STREAM_READ);
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+	}
+
 	pci_vtgpu_texture_blit(worker,
 	    &fromfb, &tofb);
+	pci_vtgpu_fb_readto_pbo(&tofb,
+	    sc->vgsc_cursorpbo);
+	pthread_mutex_lock(&gcimage->cursor_mtx);
+	pci_vtgpu_pbo_blit_to_mem(sc->vgsc_cursorpbo, 0,
+	    gcimage->cursor_data, gcimage->cursor_size);
+	pthread_mutex_unlock(&gcimage->cursor_mtx);
 
 	pci_vtgpu_fb_fini(&fromfb);
 	pci_vtgpu_fb_fini(&tofb);
 
 	worker->w_guest_cursor.vgc_x = in->pos.x;
 	worker->w_guest_cursor.vgc_y = in->pos.y;
+	worker->w_guest_cursor.vgc_hot_x = in->hot_x;
+	worker->w_guest_cursor.vgc_hot_y = in->hot_y;
+
+	pthread_mutex_lock(&gcimage->cursor_mtx);
+	gcimage->cursor_hot_x = in->hot_x;
+	gcimage->cursor_hot_y = in->hot_y;
+	pthread_mutex_unlock(&gcimage->cursor_mtx);
+	atomic_store_int(&gcimage->cursor_enabled, 1);
 }
 
 static void
 pci_vtgpu_cmd_move_cursor(struct pci_vtgpu_worker *worker,
 	    struct pci_vtgpu_ctrl_cmd *cmd)
 {
+	struct pci_vtgpu_softc *sc = worker->w_sc;
 	struct vtgpu_update_cursor *in;
+	struct bhyvegc_image *gcimage;
 
 	in = cmd->c_cmdbuf;
+	gcimage = sc->vgsc_gcimage;
 
 	worker->w_guest_cursor.vgc_x = in->pos.x;
 	worker->w_guest_cursor.vgc_y = in->pos.y;
+
+	pthread_mutex_lock(&gcimage->cursor_mtx);
+	gcimage->cursor_x = in->pos.x;
+	gcimage->cursor_y = in->pos.y;
+	pthread_mutex_unlock(&gcimage->cursor_mtx);
 }
 
 void
