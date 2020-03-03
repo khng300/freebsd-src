@@ -917,7 +917,7 @@ rfb_wr_thr(void *arg)
 		/* Determine if its time to push screen; ~24hz */
 		gettimeofday(&tv, NULL);
 		tdiff = timeval_delta(&prev_tv, &tv);
-		if (tdiff > 40000) {
+		if (tdiff > 20000) {
 			prev_tv.tv_sec = tv.tv_sec;
 			prev_tv.tv_usec = tv.tv_usec;
 			if (rfb_send_screen(rc, cfd, 0) <= 0) {
@@ -931,7 +931,7 @@ rfb_wr_thr(void *arg)
 				rfb_send_cursor_shape(rc, cfd, gc_image);
 		} else {
 			/* sleep */
-			usleep(40000 - tdiff);
+			usleep(20000 - tdiff);
 		}
 	}
 
