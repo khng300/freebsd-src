@@ -1,0 +1,26 @@
+[
+  {
+    "directory": "/usr/home/khng/Workspace/libepoxy/build",
+    "command": "ccache cc -Isrc/libepoxy.so.0.0.0.p -Isrc -I../src -Iinclude -I../include -Iinclude/epoxy -I/usr/local/include -Xclang -fcolor-diagnostics -pipe -D_FILE_OFFSET_BITS=64 -Wall -Winvalid-pch -std=gnu99 -O2 -g -fPIC -Wpointer-arith -Wmissing-declarations -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wbad-function-cast -Wold-style-definition -Wdeclaration-after-statement -Wunused -Wuninitialized -Wshadow -Wmissing-noreturn -Wmissing-format-attribute -Wredundant-decls -Werror=implicit -Werror=nonnull -Werror=init-self -Werror=main -Werror=missing-braces -Werror=sequence-point -Werror=return-type -Werror=trigraphs -Werror=array-bounds -Werror=write-strings -Werror=address -Werror=int-to-pointer-cast -Werror=pointer-to-int-cast -fno-strict-aliasing -Wno-int-conversion -fvisibility=hidden -MD -MQ src/libepoxy.so.0.0.0.p/meson-generated_.._gl_generated_dispatch.c.o -MF src/libepoxy.so.0.0.0.p/meson-generated_.._gl_generated_dispatch.c.o.d -o src/libepoxy.so.0.0.0.p/meson-generated_.._gl_generated_dispatch.c.o -c src/gl_generated_dispatch.c",
+    "file": "src/gl_generated_dispatch.c",
+    "output": "src/libepoxy.so.0.0.0.p/meson-generated_.._gl_generated_dispatch.c.o"
+  },
+  {
+    "directory": "/usr/home/khng/Workspace/libepoxy/build",
+    "command": "ccache cc -Isrc/libepoxy.so.0.0.0.p -Isrc -I../src -Iinclude -I../include -Iinclude/epoxy -I/usr/local/include -Xclang -fcolor-diagnostics -pipe -D_FILE_OFFSET_BITS=64 -Wall -Winvalid-pch -std=gnu99 -O2 -g -fPIC -Wpointer-arith -Wmissing-declarations -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wbad-function-cast -Wold-style-definition -Wdeclaration-after-statement -Wunused -Wuninitialized -Wshadow -Wmissing-noreturn -Wmissing-format-attribute -Wredundant-decls -Werror=implicit -Werror=nonnull -Werror=init-self -Werror=main -Werror=missing-braces -Werror=sequence-point -Werror=return-type -Werror=trigraphs -Werror=array-bounds -Werror=write-strings -Werror=address -Werror=int-to-pointer-cast -Werror=pointer-to-int-cast -fno-strict-aliasing -Wno-int-conversion -fvisibility=hidden -MD -MQ src/libepoxy.so.0.0.0.p/meson-generated_.._egl_generated_dispatch.c.o -MF src/libepoxy.so.0.0.0.p/meson-generated_.._egl_generated_dispatch.c.o.d -o src/libepoxy.so.0.0.0.p/meson-generated_.._egl_generated_dispatch.c.o -c src/egl_generated_dispatch.c",
+    "file": "src/egl_generated_dispatch.c",
+    "output": "src/libepoxy.so.0.0.0.p/meson-generated_.._egl_generated_dispatch.c.o"
+  },
+  {
+    "directory": "/usr/home/khng/Workspace/libepoxy/build",
+    "command": "ccache cc -Isrc/libepoxy.so.0.0.0.p -Isrc -I../src -Iinclude -I../include -Iinclude/epoxy -I/usr/local/include -Xclang -fcolor-diagnostics -pipe -D_FILE_OFFSET_BITS=64 -Wall -Winvalid-pch -std=gnu99 -O2 -g -fPIC -Wpointer-arith -Wmissing-declarations -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wbad-function-cast -Wold-style-definition -Wdeclaration-after-statement -Wunused -Wuninitialized -Wshadow -Wmissing-noreturn -Wmissing-format-attribute -Wredundant-decls -Werror=implicit -Werror=nonnull -Werror=init-self -Werror=main -Werror=missing-braces -Werror=sequence-point -Werror=return-type -Werror=trigraphs -Werror=array-bounds -Werror=write-strings -Werror=address -Werror=int-to-pointer-cast -Werror=pointer-to-int-cast -fno-strict-aliasing -Wno-int-conversion -fvisibility=hidden -MD -MQ src/libepoxy.so.0.0.0.p/dispatch_common.c.o -MF src/libepoxy.so.0.0.0.p/dispatch_common.c.o.d -o src/libepoxy.so.0.0.0.p/dispatch_common.c.o -c ../src/dispatch_common.c",
+    "file": "../src/dispatch_common.c",
+    "output": "src/libepoxy.so.0.0.0.p/dispatch_common.c.o"
+  },
+  {
+    "directory": "/usr/home/khng/Workspace/libepoxy/build",
+    "command": "ccache cc -Isrc/libepoxy.so.0.0.0.p -Isrc -I../src -Iinclude -I../include -Iinclude/epoxy -I/usr/local/include -Xclang -fcolor-diagnostics -pipe -D_FILE_OFFSET_BITS=64 -Wall -Winvalid-pch -std=gnu99 -O2 -g -fPIC -Wpointer-arith -Wmissing-declarations -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wbad-function-cast -Wold-style-definition -Wdeclaration-after-statement -Wunused -Wuninitialized -Wshadow -Wmissing-noreturn -Wmissing-format-attribute -Wredundant-decls -Werror=implicit -Werror=nonnull -Werror=init-self -Werror=main -Werror=missing-braces -Werror=sequence-point -Werror=return-type -Werror=trigraphs -Werror=array-bounds -Werror=write-strings -Werror=address -Werror=int-to-pointer-cast -Werror=pointer-to-int-cast -fno-strict-aliasing -Wno-int-conversion -fvisibility=hidden -MD -MQ src/libepoxy.so.0.0.0.p/dispatch_egl.c.o -MF src/libepoxy.so.0.0.0.p/dispatch_egl.c.o.d -o src/libepoxy.so.0.0.0.p/dispatch_egl.c.o -c ../src/dispatch_egl.c",
+    "file": "../src/dispatch_egl.c",
+    "output": "src/libepoxy.so.0.0.0.p/dispatch_egl.c.o"
+  }
+]
