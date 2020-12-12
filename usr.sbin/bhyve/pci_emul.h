@@ -40,6 +40,8 @@
 
 #include <assert.h>
 
+#include <string.h>
+
 #define	PCI_BARMAX	PCIR_MAX_BAR_0	/* BAR registers in a Type 0 header */
 
 struct vmctx;
@@ -71,6 +73,9 @@ struct pci_devemu {
 	uint64_t  (*pe_barread)(struct vmctx *ctx, int vcpu,
 				struct pci_devinst *pi, int baridx,
 				uint64_t offset, int size);
+
+	void	(*pe_baraddr)(struct vmctx *ctx, struct pci_devinst *pi,
+			      int baridx, int enabled, uint64_t address);
 };
 #define PCI_EMUL_SET(x)   DATA_SET(pci_devemu_set, x);
 
@@ -86,6 +91,7 @@ struct pcibar {
 	enum pcibar_type	type;		/* io or memory */
 	uint64_t		size;
 	uint64_t		addr;
+	uint8_t			lobits;
 };
 
 #define PI_NAMESZ	40
@@ -215,6 +221,7 @@ int	init_pci(struct vmctx *ctx);
 void	pci_callback(void);
 int	pci_emul_alloc_bar(struct pci_devinst *pdi, int idx,
 	    enum pcibar_type type, uint64_t size);
+uint64_t pci_emul_alloc_mmio(enum pcibar_type type, uint64_t size, uint64_t mask);
 int	pci_emul_add_msicap(struct pci_devinst *pi, int msgnum);
 int	pci_emul_add_pciecap(struct pci_devinst *pi, int pcie_device_type);
 void	pci_emul_capwrite(struct pci_devinst *pi, int offset, int bytes,

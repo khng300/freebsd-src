@@ -1092,3 +1092,9 @@
 #define	PCIM_OSC_CTL_PCIE_PME		0x04	/* PCIe Native Power Mgt Events */
 #define	PCIM_OSC_CTL_PCIE_AER		0x08	/* PCIe Advanced Error Reporting */
 #define	PCIM_OSC_CTL_PCIE_CAP_STRUCT	0x10	/* Various Capability Structures */
+
+/*
+ * PCI Vendors
+ */
+#define PCI_VENDOR_INTEL 	0x8086
+#define PCI_VENDOR_AMD 		0x1002

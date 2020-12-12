@@ -460,10 +460,12 @@ pci_emul_alloc_resource(uint64_t *baseptr, uint64_t limit, uint64_t size,
 static void
 modify_bar_registration(struct pci_devinst *pi, int idx, int registration)
 {
+	struct pci_devemu *pe;
 	int error;
 	struct inout_port iop;
 	struct mem_range mr;
 
+	pe = pi->pi_d;
 	switch (pi->pi_bar[idx].type) {
 	case PCIBAR_IO:
 		bzero(&iop, sizeof(struct inout_port));
@@ -477,6 +479,9 @@ modify_bar_registration(struct pci_devinst *pi, int idx, int registration)
 			error = register_inout(&iop);
 		} else
 			error = unregister_inout(&iop);
+		if (pe->pe_baraddr != NULL)
+			(*pe->pe_baraddr)(pi->pi_vmctx, pi, idx, registration,
+					  pi->pi_bar[idx].addr);
 		break;
 	case PCIBAR_MEM32:
 	case PCIBAR_MEM64:
@@ -492,6 +497,9 @@ modify_bar_registration(struct pci_devinst *pi, int idx, int registration)
 			error = register_mem(&mr);
 		} else
 			error = unregister_mem(&mr);
+		if (pe->pe_baraddr != NULL)
+			(*pe->pe_baraddr)(pi->pi_vmctx, pi, idx, registration,
+					  pi->pi_bar[idx].addr);
 		break;
 	default:
 		error = EINVAL;
@@ -670,6 +678,40 @@ pci_emul_alloc_bar(struct pci_devinst *pdi, int idx, enum pcibar_type type,
 	register_bar(pdi, idx);
 
 	return (0);
+}
+
+/* mask should be a power of 2 minus 1 (e.g. 0x000FFFFF) */
+uint64_t
+pci_emul_alloc_mmio(enum pcibar_type type, uint64_t size, uint64_t mask)
+{
+	uint64_t *baseptr, limit;
+
+	switch (type) {
+	case PCIBAR_IO:
+		baseptr = &pci_emul_iobase;
+		limit = PCI_EMUL_IOLIMIT;
+		break;
+	case PCIBAR_MEM32:
+		baseptr = &pci_emul_membase32;
+		limit = PCI_EMUL_MEMLIMIT32;
+		break;
+	case PCIBAR_MEM64:
+		baseptr = &pci_emul_membase64;
+		limit = pci_emul_memlim64;
+		break;
+	default:
+		return 0;
+	}
+
+	/* align base */
+	const uint64_t base = (*baseptr + mask) & ~mask;
+
+	if (base + size > limit)
+		return 0;
+
+	*baseptr = base + size;
+
+	return base;
 }
 
 #define	CAP_START_OFFSET	0x40

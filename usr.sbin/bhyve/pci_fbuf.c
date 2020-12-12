@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <string.h>
 
+#include <err.h>
 #include <errno.h>
 #include <unistd.h>
 
@@ -222,6 +223,30 @@ pci_fbuf_read(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
 
 	return (value);
 }
+
+static void
+pci_fbuf_baraddr(struct vmctx *ctx, struct pci_devinst *pi, int baridx,
+		 int enabled, uint64_t address)
+{
+	struct pci_fbuf_softc *sc;
+	int prot;
+
+	if (baridx != 1)
+		return;
+
+	sc = pi->pi_arg;
+	if (!enabled && sc->fbaddr != 0) {
+		if (vm_munmap_memseg(ctx, sc->fbaddr, FB_SIZE) != 0)
+			warnx("pci_fbuf: munmap_memseg failed");
+		sc->fbaddr = 0;
+	} else if (sc->fb_base != NULL && sc->fbaddr == 0) {
+		prot = PROT_READ | PROT_WRITE;
+		if (vm_mmap_memseg(ctx, address, VM_FRAMEBUFFER, 0, FB_SIZE, prot) != 0)
+			warnx("pci_fbuf: mmap_memseg failed");
+		sc->fbaddr = address;
+	}
+}
+
 
 static int
 pci_fbuf_parse_opts(struct pci_fbuf_softc *sc, char *opts)
@@ -445,6 +470,7 @@ struct pci_devemu pci_fbuf = {
 	.pe_emu =	"fbuf",
 	.pe_init =	pci_fbuf_init,
 	.pe_barwrite =	pci_fbuf_write,
-	.pe_barread =	pci_fbuf_read
+	.pe_barread =	pci_fbuf_read,
+	.pe_baraddr =	pci_fbuf_baraddr,
 };
 PCI_EMUL_SET(pci_fbuf);
