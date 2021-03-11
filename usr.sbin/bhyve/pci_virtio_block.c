@@ -541,7 +541,7 @@ pci_vtblk_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 		free(sc);
 		return (1);
 	}
-	vi_set_io_bar(&sc->vbsc_vs, 0);
+	vi_setup_pci_bar(&sc->vbsc_vs, 0);
 	return (0);
 }
 
@@ -568,6 +568,8 @@ pci_vtblk_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 struct pci_devemu pci_de_vblk = {
 	.pe_emu =	"virtio-blk",
 	.pe_init =	pci_vtblk_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT

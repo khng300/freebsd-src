@@ -725,7 +725,7 @@ pci_vtscsi_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 
 	if (vi_intr_init(&sc->vss_vs, 1, fbsdrun_virtio_msix()))
 		return (1);
-	vi_set_io_bar(&sc->vss_vs, 0);
+	vi_setup_pci_bar(&sc->vss_vs, 0);
 
 	return (0);
 }
@@ -734,6 +734,8 @@ pci_vtscsi_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 struct pci_devemu pci_de_vscsi = {
 	.pe_emu =	"virtio-scsi",
 	.pe_init =	pci_vtscsi_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read
 };
