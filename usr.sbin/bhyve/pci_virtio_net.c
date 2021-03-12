@@ -152,7 +152,7 @@ static struct virtio_consts vtnet_vi_consts = {
 	pci_vtnet_cfgread,	/* read PCI config */
 	pci_vtnet_cfgwrite,	/* write PCI config */
 	pci_vtnet_neg_features,	/* apply negotiated features */
-	VTNET_S_HOSTCAPS,	/* our capabilities */
+	VTNET_S_HOSTCAPS | VIRTIO_F_VERSION_1,	/* our capabilities */
 #ifdef BHYVE_SNAPSHOT
 	pci_vtnet_pause,	/* pause rx/tx threads */
 	pci_vtnet_resume,	/* resume rx/tx threads */
@@ -667,7 +667,8 @@ pci_vtnet_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 	sc->vsc_config.max_virtqueue_pairs = 1;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_NET);
+	pci_set_cfgdata16(pi, PCIR_DEVICE,
+	    VIRTIO_PCI_DEVICEID_MODERN_MIN + VIRTIO_ID_NETWORK);
 	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_NETWORK);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_NETWORK);
@@ -685,8 +686,8 @@ pci_vtnet_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 		return (1);
 	}
 
-	/* use BAR 0 to map config regs in IO space */
-	vi_setup_pci_bar(&sc->vsc_vs, 0);
+	/* use BAR 2 to map config regs in mem space */
+	vi_setup_pci_bar(&sc->vsc_vs, VIRTIO_MODERN_BAR);
 
 	sc->resetting = 0;
 
