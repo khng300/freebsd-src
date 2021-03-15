@@ -470,6 +470,18 @@ vq_kick_disable(struct vqueue_info *vq)
 #define VIRTIO_MODERN_BAR 2	/* BAR # to host virtio modern cfg regs */
 
 struct iovec;
+
+/*
+ * Request description returned by vq_getchain
+ */
+struct vi_req {
+	struct iovec *rd_iov;	/* driver-to-device buffer iovec */
+	struct iovec *wr_iov;	/* device-to-driver buffer iovec */
+	int rd_niov;		/* num of driver-to-device iovec */
+	int wr_niov;		/* num of driver-to-device iovec */
+	unsigned int idx;	/* ring index */
+};
+
 void	vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
 			void *dev_softc, struct pci_devinst *pi,
 			struct vqueue_info *queues);
@@ -477,8 +489,8 @@ int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
 void	vi_setup_pci_bar(struct virtio_softc *vs, int barnum);
 void	vi_reset_dev(struct virtio_softc *);
 
-int	vq_getchain(struct vqueue_info *vq, uint16_t *pidx,
-		    struct iovec *iov, int n_iov, uint16_t *flags);
+int	vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
+	    struct vi_req *reqp);
 void	vq_retchains(struct vqueue_info *vq, uint16_t n_chains);
 void	vq_relchain_prepare(struct vqueue_info *vq, uint16_t idx,
 			    uint32_t iolen);
