@@ -236,6 +236,7 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 	off_t arg[2];
 	ssize_t clen, len, off, boff, voff;
 	int i, err;
+	struct spacectl_range range;
 
 	br = be->be_req;
 	if (br->br_iovcnt <= 1)
@@ -333,8 +334,15 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 				err = errno;
 			else
 				br->br_resid = 0;
-		} else
-			err = EOPNOTSUPP;
+		} else {
+			range.r_offset = br->br_offset;
+			range.r_len = br->br_resid;
+
+			if (fspacectl(bc->bc_fd, SPACECTL_DEALLOC, &range, 0))
+				err = errno;
+			else
+				br->br_resid = 0;
+		}
 		break;
 	default:
 		err = EINVAL;
@@ -563,8 +571,11 @@ blockif_open(nvlist_t *nvl, const char *ident)
 			candelete = arg.value.i;
 		if (ioctl(fd, DIOCGPROVIDERNAME, name) == 0)
 			geom = 1;
-	} else
+	} else {
 		psectsz = sbuf.st_blksize;
+		/* Avoid fallback implementation */
+		candelete = fpathconf(fd, _PC_FDEALLOC_PRESENT) == 1;
+	}
 
 #ifndef WITHOUT_CAPSICUM
 	if (caph_ioctls_limit(fd, cmds, nitems(cmds)) == -1)
