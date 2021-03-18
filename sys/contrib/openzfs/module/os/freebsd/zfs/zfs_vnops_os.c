@@ -3822,6 +3822,49 @@ zfs_link(znode_t *tdzp, znode_t *szp, const char *name, cred_t *cr,
 }
 
 /*
+ * common code for zfs_space-related operations
+ *
+ * This function is called from zfs_space and zfs_deallocate.
+ */
+static int
+zfs_space_common(znode_t *zp, int cmd, off_t off, off_t len, int flag,
+    cred_t *cr)
+{
+	zfsvfs_t	*zfsvfs = ZTOZSB(zp);
+	uint64_t	uoff, ulen;
+	int		error;
+
+	if (cmd != F_FREESP)
+		return (EINVAL);
+
+	/*
+	 * Callers might not be able to detect properly that we are read-only,
+	 * so check it explicitly here.
+	 */
+	if (zfs_is_readonly(zfsvfs))
+		return (EROFS);
+
+	if (len < 0)
+		return (EINVAL);
+
+	/*
+	 * Permissions aren't checked on Solaris because on this OS
+	 * zfs_space() can only be called with an opened file handle.
+	 * On Linux we can get here through truncate_range() which
+	 * operates directly on inodes, so we need to check access rights.
+	 */
+	if ((error = zfs_zaccess(zp, ACE_WRITE_DATA, 0, B_FALSE, cr)))
+		return (error);
+
+	uoff = off;
+	ulen = len;
+
+	error = zfs_freesp(zp, uoff, ulen, flag, TRUE);
+
+	return (error);
+}
+
+/*
  * Free or allocate space in a file.  Currently, this function only
  * supports the `F_FREESP' command.  However, this command is somewhat
  * misnamed, as its functionality includes the ability to allocate as
@@ -3845,47 +3888,16 @@ zfs_space(znode_t *zp, int cmd, flock64_t *bfp, int flag,
     offset_t offset, cred_t *cr)
 {
 	zfsvfs_t	*zfsvfs = ZTOZSB(zp);
-	uint64_t	off, len;
+	off_t		off, len;
 	int		error;
 
 	ZFS_ENTER(zfsvfs);
 	ZFS_VERIFY_ZP(zp);
 
-	if (cmd != F_FREESP) {
-		ZFS_EXIT(zfsvfs);
-		return (SET_ERROR(EINVAL));
-	}
-
-	/*
-	 * Callers might not be able to detect properly that we are read-only,
-	 * so check it explicitly here.
-	 */
-	if (zfs_is_readonly(zfsvfs)) {
-		ZFS_EXIT(zfsvfs);
-		return (SET_ERROR(EROFS));
-	}
-
-	if (bfp->l_len < 0) {
-		ZFS_EXIT(zfsvfs);
-		return (SET_ERROR(EINVAL));
-	}
-
-	/*
-	 * Permissions aren't checked on Solaris because on this OS
-	 * zfs_space() can only be called with an opened file handle.
-	 * On Linux we can get here through truncate_range() which
-	 * operates directly on inodes, so we need to check access rights.
-	 */
-	if ((error = zfs_zaccess(zp, ACE_WRITE_DATA, 0, B_FALSE, cr))) {
-		ZFS_EXIT(zfsvfs);
-		return (error);
-	}
-
 	off = bfp->l_start;
 	len = bfp->l_len; /* 0 means from off to end of file */
 
-	error = zfs_freesp(zp, off, len, flag, TRUE);
-
+	error = zfs_space_common(zp, cmd, off, len, flag, cr);
 	ZFS_EXIT(zfsvfs);
 	return (error);
 }
@@ -5217,6 +5229,9 @@ zfs_freebsd_pathconf(struct vop_pathconf_args *ap)
 	case _PC_NAME_MAX:
 		*ap->a_retval = NAME_MAX;
 		return (0);
+	case _PC_FDEALLOC_PRESENT:
+		*ap->a_retval = 1;
+		return (0);
 	case _PC_PIPE_BUF:
 		if (ap->a_vp->v_type == VDIR || ap->a_vp->v_type == VFIFO) {
 			*ap->a_retval = PIPE_BUF;
@@ -5813,6 +5828,43 @@ zfs_vptocnp(struct vop_vptocnp_args *ap)
 	return (error);
 }
 
+/*
+ * This is mostly the same as zfs_space except it also limits the range of
+ * operation to zp->z_size. The log
+ * record of zfs_space during replay would be the same as ordinary zfs_space.
+ */
+static int
+zfs_deallocate(struct vop_deallocate_args *ap)
+{
+	vnode_t *vp;
+	znode_t *zp;
+	zfsvfs_t *zfsvfs;
+	off_t offset, len;
+	int error;
+
+	vp = ap->a_vp;
+	zp = VTOZ(vp);
+	zfsvfs = ZTOZSB(zp);
+
+	ZFS_ENTER(zfsvfs);
+	ZFS_VERIFY_ZP(zp);
+
+	offset = *ap->a_offset;
+	len = *ap->a_len;
+
+	len = omin(len, zp->z_size - offset);
+	if (len == 0) {
+		error = 0;
+		goto out;
+	}
+	error = zfs_space_common(zp, F_FREESP, offset, len, O_RDWR, ap->a_cred);
+out:
+	if (__predict_true(error == 0))
+		*ap->a_len = 0;
+	ZFS_EXIT(zfsvfs);
+	return (error);
+}
+
 struct vop_vector zfs_vnodeops;
 struct vop_vector zfs_fifoops;
 struct vop_vector zfs_shareops;
@@ -5830,6 +5882,7 @@ struct vop_vector zfs_vnodeops = {
 	.vop_fplookup_symlink = zfs_freebsd_fplookup_symlink,
 	.vop_access =		zfs_freebsd_access,
 	.vop_allocate =		VOP_EINVAL,
+	.vop_deallocate =	zfs_deallocate,
 	.vop_lookup =		zfs_cache_lookup,
 	.vop_cachedlookup =	zfs_freebsd_cachedlookup,
 	.vop_getattr =		zfs_freebsd_getattr,
