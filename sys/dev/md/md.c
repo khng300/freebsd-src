@@ -875,7 +875,7 @@ mdstart_vnode(struct md_s *sc, struct bio *bp)
 	struct buf *pb;
 	bus_dma_segment_t *vlist;
 	struct thread *td;
-	off_t iolen, iostart, len, zerosize;
+	off_t iolen, iostart, len;
 	int ma_offs, npages;
 
 	switch (bp->bio_cmd) {
@@ -883,9 +883,8 @@ mdstart_vnode(struct md_s *sc, struct bio *bp)
 		auio.uio_rw = UIO_READ;
 		break;
 	case BIO_WRITE:
-	case BIO_DELETE:
 		auio.uio_rw = UIO_WRITE;
-		break;
+	case BIO_DELETE:
 	case BIO_FLUSH:
 		break;
 	default:
@@ -914,6 +913,10 @@ mdstart_vnode(struct md_s *sc, struct bio *bp)
 		VOP_UNLOCK(vp);
 		vn_finished_write(mp);
 		return (error);
+	} else if (bp->bio_cmd == BIO_DELETE) {
+		error = vn_deallocate(vp, bp->bio_offset, bp->bio_length, 0, 0,
+		    sc->cred, NOCRED, td);
+		return (error);
 	}
 
 	auio.uio_offset = (vm_ooffset_t)bp->bio_offset;
@@ -921,25 +924,7 @@ mdstart_vnode(struct md_s *sc, struct bio *bp)
 	auio.uio_segflg = UIO_SYSSPACE;
 	auio.uio_td = td;
 
-	if (bp->bio_cmd == BIO_DELETE) {
-		/*
-		 * Emulate BIO_DELETE by writing zeros.
-		 */
-		zerosize = ZERO_REGION_SIZE -
-		    (ZERO_REGION_SIZE % sc->sectorsize);
-		auio.uio_iovcnt = howmany(bp->bio_length, zerosize);
-		piov = malloc(sizeof(*piov) * auio.uio_iovcnt, M_MD, M_WAITOK);
-		auio.uio_iov = piov;
-		while (len > 0) {
-			piov->iov_base = __DECONST(void *, zero_region);
-			piov->iov_len = len;
-			if (len > zerosize)
-				piov->iov_len = zerosize;
-			len -= piov->iov_len;
-			piov++;
-		}
-		piov = auio.uio_iov;
-	} else if ((bp->bio_flags & BIO_VLIST) != 0) {
+	if ((bp->bio_flags & BIO_VLIST) != 0) {
 		piov = malloc(sizeof(*piov) * bp->bio_ma_n, M_MD, M_WAITOK);
 		auio.uio_iov = piov;
 		vlist = (bus_dma_segment_t *)bp->bio_data;
