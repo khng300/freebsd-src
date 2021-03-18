@@ -146,6 +146,7 @@ static fo_mmap_t	shm_mmap;
 static fo_get_seals_t	shm_get_seals;
 static fo_add_seals_t	shm_add_seals;
 static fo_fallocate_t	shm_fallocate;
+static fo_fspacectl_t	shm_fspacectl;
 
 /* File descriptor operations. */
 struct fileops shm_ops = {
@@ -166,6 +167,7 @@ struct fileops shm_ops = {
 	.fo_get_seals = shm_get_seals,
 	.fo_add_seals = shm_add_seals,
 	.fo_fallocate = shm_fallocate,
+	.fo_fspacectl = shm_fspacectl,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE,
 };
 
@@ -1873,6 +1875,93 @@ shm_get_seals(struct file *fp, int *seals)
 	*seals = shmfd->shm_seals;
 	return (0);
 }
+
+static int
+shm_deallocate(struct shmfd *shmfd, off_t offset, off_t len, int flags,
+    void *rl_cookie, struct thread *td)
+{
+	vm_pindex_t start, start2, end;
+	vm_ooffset_t size;
+	vm_page_t m;
+
+	start = OFF_TO_IDX(offset);
+	start2 = OFF_TO_IDX(offset + PAGE_MASK);
+	end = OFF_TO_IDX(offset + len);
+	size = offset + len;
+
+	VM_OBJECT_WLOCK(shmfd->shm_object);
+
+	if (start2 < end)
+		vm_object_page_remove(shmfd->shm_object, start2, end, 0);
+	if (len > OFF_MAX - offset)
+		len = OFF_MAX - offset;
+
+	if ((offset & PAGE_MASK) != offset) {
+		m = vm_page_grab(shmfd->shm_object, start, VM_ALLOC_NOCREAT);
+		if (m != NULL) {
+			pmap_zero_page_area(m, offset & PAGE_MASK,
+			    PAGE_SIZE - (offset & PAGE_MASK));
+			vm_page_set_dirty(m);
+			vm_page_xunbusy(m);
+		}
+	}
+	if ((size & PAGE_MASK) != size) {
+		m = vm_page_grab(shmfd->shm_object, end, VM_ALLOC_NOCREAT);
+		if (m != NULL) {
+			pmap_zero_page_area(m, 0, offset + len & PAGE_MASK);
+			vm_page_set_dirty(m);
+			vm_page_xunbusy(m);
+		}
+	}
+
+	VM_OBJECT_WUNLOCK(shmfd->shm_object);
+	return (0);
+}
+
+static int
+shm_fspacectl(struct file *fp, int cmd, off_t offset, off_t len, int flags,
+    struct ucred *active_cred, struct thread *td)
+{
+	void *rl_cookie;
+	struct shmfd *shmfd;
+	size_t size;
+	int error;
+
+	/* This assumes that the caller already checked for overflow. */
+	error = 0;
+	shmfd = fp->f_data;
+	size = offset + len;
+
+	if (cmd != SPACECTL_DEALLOC)
+		return (EINVAL);
+	if (offset < 0 || len < 0 || flags != 0)
+		return (EINVAL);
+	if (len == 0)
+		/* Degenerated case */
+		return (0);
+
+	/*
+	 * Just grab the rangelock for the range that we may be attempting to
+	 * grow, rather than blocking read/write for regions we won't be
+	 * touching while this (potential) resize is in progress.  Other
+	 * attempts to resize the shmfd will have to take a write lock from 0 to
+	 * OFF_MAX, so this being potentially beyond the current usable range of
+	 * the shmfd is not necessarily a concern.  If other mechanisms are
+	 * added to grow a shmfd, this may need to be re-evaluated.
+	 */
+	rl_cookie = rangelock_wlock(&shmfd->shm_rl, offset, size,
+	    &shmfd->shm_mtx);
+	switch (cmd) {
+	case SPACECTL_DEALLOC:
+		error = shm_deallocate(shmfd, offset, len, flags, rl_cookie, td);
+		break;
+	default:
+		panic("%s: unknown cmd %d", __func__, cmd);
+	}
+	rangelock_unlock(&shmfd->shm_rl, rl_cookie, &shmfd->shm_mtx);
+	return (error);
+}
+
 
 static int
 shm_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)

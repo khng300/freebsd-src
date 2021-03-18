@@ -3570,6 +3570,20 @@ freebsd32_posix_fallocate(struct thread *td,
 }
 
 int
+freebsd32_fspacectl(struct thread *td, struct freebsd32_fspacectl_args *uap)
+{
+	int error;
+	struct spacectl_range range;
+
+	error = copyin(uap->range, &range, sizeof(range));
+	if (error != 0)
+		return (error);
+
+	error = kern_fspacectl(td, uap->fd, uap->cmd, uap->range, uap->flags);
+	return (error);
+}
+
+int
 freebsd32_posix_fadvise(struct thread *td,
     struct freebsd32_posix_fadvise_args *uap)
 {

@@ -862,6 +862,59 @@ kern_posix_fallocate(struct thread *td, int fd, off_t offset, off_t len)
 }
 
 int
+sys_fspacectl(struct thread *td, struct fspacectl_args *uap)
+{
+	struct spacectl_range range;
+	int error;
+
+	error = copyin(uap->range, &range, sizeof(range));
+	if (error != 0)
+		return (error);
+
+	error = kern_fspacectl(td, uap->fd, uap->cmd, &range, uap->flags);
+	return (error);
+}
+
+int
+kern_fspacectl(struct thread *td, int fd, int cmd, struct spacectl_range *range,
+    int flags)
+{
+	struct file *fp;
+	off_t offset;
+	int error;
+
+	offset = range->r_len;
+
+	AUDIT_ARG_FD(fd);
+	AUDIT_ARG_CMD(cmd);
+	AUDIT_ARG_FFLAGS(flags);
+
+	if (cmd != SPACECTL_DEALLOC ||
+	    range->r_offset < 0 || range->r_len < 0 ||
+	    (flags & ~SPACECTL_F_SUPPORTED) != 0)
+		return (EINVAL);
+
+	error = fget(td, fd, &cap_pwrite_rights, &fp);
+	if (error != 0)
+		return (error);
+	AUDIT_ARG_FILE(td->td_proc, fp);
+	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0) {
+		error = ESPIPE;
+		goto out;
+	}
+	if ((fp->f_flag & FWRITE) == 0) {
+		error = EBADF;
+		goto out;
+	}
+
+	error = fo_fspacectl(fp, cmd, range->r_offset, range->r_len, flags,
+	    td->td_ucred, td);
+out:
+	fdrop(fp, td);
+	return (error);
+}
+
+int
 kern_specialfd(struct thread *td, int type, void *arg)
 {
 	struct file *fp;

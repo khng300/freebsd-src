@@ -93,6 +93,7 @@ static int vop_stdgetpages_async(struct vop_getpages_async_args *ap);
 static int vop_stdread_pgcache(struct vop_read_pgcache_args *ap);
 static int vop_stdstat(struct vop_stat_args *ap);
 static int vop_stdvput_pair(struct vop_vput_pair_args *ap);
+static int vop_stddeallocate(struct vop_deallocate_args *ap);
 
 /*
  * This vnode table stores what we want to do if the filesystem doesn't
@@ -117,6 +118,7 @@ struct vop_vector default_vnodeops = {
 	.vop_advlockasync =	vop_stdadvlockasync,
 	.vop_advlockpurge =	vop_stdadvlockpurge,
 	.vop_allocate =		vop_stdallocate,
+	.vop_deallocate =	vop_stddeallocate,
 	.vop_bmap =		vop_stdbmap,
 	.vop_close =		VOP_NULL,
 	.vop_fsync =		VOP_NULL,
@@ -518,6 +520,7 @@ vop_stdpathconf(ap)
 		case _PC_ACL_EXTENDED:
 		case _PC_ACL_NFS4:
 		case _PC_CAP_PRESENT:
+		case _PC_FDEALLOC_PRESENT:
 		case _PC_INF_PRESENT:
 		case _PC_MAC_PRESENT:
 			*ap->a_retval = 0;
@@ -1066,6 +1069,127 @@ vop_stdallocate(struct vop_allocate_args *ap)
 	*ap->a_len = len;
 	*ap->a_offset = offset;
 	free(buf, M_TEMP);
+	return (error);
+}
+
+static int
+vp_zerofill(struct vnode *vp, struct vattr *vap, off_t offset, off_t len,
+    off_t *residp, struct ucred *cred)
+{
+	int iosize;
+	int error = 0;
+	struct iovec aiov;
+	struct uio auio;
+	struct thread *td;
+
+	iosize = vap->va_blocksize;
+	td = curthread;
+
+	if (iosize == 0)
+		iosize = BLKDEV_IOSIZE;
+	if (iosize > maxphys)
+		iosize = maxphys;
+	iosize = min(iosize, ZERO_REGION_SIZE);
+
+	while (len > 0) {
+		int xfersize = iosize;
+		if (offset % iosize != 0)
+			xfersize -= offset % iosize;
+		if (xfersize > len)
+			xfersize = len;
+
+		aiov.iov_base = __DECONST(void *, zero_region);
+		aiov.iov_len = xfersize;
+		auio.uio_iov = &aiov;
+		auio.uio_iovcnt = 1;
+		auio.uio_offset = offset;
+		auio.uio_resid = xfersize;
+		auio.uio_segflg = UIO_SYSSPACE;
+		auio.uio_rw = UIO_WRITE;
+		auio.uio_td = td;
+
+		error = VOP_WRITE(vp, &auio, 0, cred);
+		if (error != 0) {
+			len -= xfersize - auio.uio_resid;
+			break;
+		}
+
+		len -= xfersize;
+		offset += xfersize;
+
+		maybe_yield();
+	}
+
+	*residp = len;
+	return (error);
+}
+
+static int
+vop_stddeallocate(struct vop_deallocate_args *ap)
+{
+	struct vnode *vp;
+	off_t offset, len;
+	struct ucred *cred;
+	int error;
+	struct vattr va;
+	off_t noff, xfersize, rem;
+
+	vp = ap->a_vp;
+	offset = *ap->a_offset;
+	len = *ap->a_len;
+	cred = ap->a_cred;
+
+	error = VOP_GETATTR(vp, &va, cred);
+	if (error)
+		return (error);
+
+	len = omin(OFF_MAX - offset, *ap->a_len);
+	while (len > 0) {
+		noff = offset;
+		error = vn_bmap_seekhole_locked(vp, FIOSEEKDATA, &noff, cred);
+		if (error) {
+			if (error != ENXIO)
+				/* XXX: Is it okay to fallback further? */
+				goto out;
+
+			/*
+			 * No more data region to be filled
+			 */
+			len = 0;
+			error = 0;
+			break;
+		}
+		KASSERT(noff >= offset, ("FIOSEEKDATA going backward"));
+		if (noff != offset) {
+			xfersize = omin(noff - offset, len);
+			len -= xfersize;
+			offset += xfersize;
+			if (len == 0)
+				break;
+		}
+		error = vn_bmap_seekhole_locked(vp, FIOSEEKHOLE, &noff, cred);
+		if (error)
+			goto out;
+
+		/* Fill zeroes */
+		xfersize = omin(noff - offset, len);
+		error = vp_zerofill(vp, &va, offset, xfersize, &rem, cred);
+		if (error) {
+			len -= xfersize - rem;
+			offset += xfersize - rem;
+			goto out;
+		}
+
+		len -= xfersize;
+		offset += xfersize;
+		if (should_yield())
+			break;
+	}
+out:
+	if (error == 0) {
+		*ap->a_offset = offset;
+		*ap->a_len = len;
+	}
 	return (error);
 }
 

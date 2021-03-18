@@ -725,6 +725,9 @@ void	vunref(struct vnode *);
 void	vn_printf(struct vnode *vp, const char *fmt, ...) __printflike(2,3);
 int	vrecycle(struct vnode *vp);
 int	vrecyclel(struct vnode *vp);
+/* vn_bmap_seekhole_locked is not public KPI */
+int	vn_bmap_seekhole_locked(struct vnode *vp, u_long cmd, off_t *off,
+	    struct ucred *cred);
 int	vn_bmap_seekhole(struct vnode *vp, u_long cmd, off_t *off,
 	    struct ucred *cred);
 int	vn_close(struct vnode *vp,
@@ -733,6 +736,9 @@ int	vn_copy_file_range(struct vnode *invp, off_t *inoffp,
 	    struct vnode *outvp, off_t *outoffp, size_t *lenp,
 	    unsigned int flags, struct ucred *incred, struct ucred *outcred,
 	    struct thread *fsize_td);
+int	vn_deallocate(struct vnode *vp, off_t offset, off_t len, int flags,
+	    int ioflg, struct ucred *active_cred, struct ucred *file_cred,
+	    struct thread *td);
 void	vn_finished_write(struct mount *mp);
 void	vn_finished_secondary_write(struct mount *mp);
 int	vn_fsync_buf(struct vnode *vp, int waitfor);
