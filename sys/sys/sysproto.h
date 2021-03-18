@@ -1847,6 +1847,12 @@ struct aio_writev_args {
 struct aio_readv_args {
 	char aiocbp_l_[PADL_(struct aiocb *)]; struct aiocb * aiocbp; char aiocbp_r_[PADR_(struct aiocb *)];
 };
+struct fspacectl_args {
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char cmd_l_[PADL_(int)]; int cmd; char cmd_r_[PADR_(int)];
+	char range_l_[PADL_(struct spacectl_range *)]; struct spacectl_range * range; char range_r_[PADR_(struct spacectl_range *)];
+	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
+};
 int	nosys(struct thread *, struct nosys_args *);
 void	sys_sys_exit(struct thread *, struct sys_exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
@@ -2241,6 +2247,7 @@ int	sys_rpctls_syscall(struct thread *, struct rpctls_syscall_args *);
 int	sys___specialfd(struct thread *, struct __specialfd_args *);
 int	sys_aio_writev(struct thread *, struct aio_writev_args *);
 int	sys_aio_readv(struct thread *, struct aio_readv_args *);
+int	sys_fspacectl(struct thread *, struct fspacectl_args *);
 
 #ifdef COMPAT_43
 
@@ -3175,6 +3182,7 @@ int	freebsd12_closefrom(struct thread *, struct freebsd12_closefrom_args *);
 #define	SYS_AUE___specialfd	AUE_SPECIALFD
 #define	SYS_AUE_aio_writev	AUE_AIO_WRITEV
 #define	SYS_AUE_aio_readv	AUE_AIO_READV
+#define	SYS_AUE_fspacectl	AUE_FSPACECTL
 
 #undef PAD_
 #undef PADL_

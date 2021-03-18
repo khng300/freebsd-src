@@ -3407,6 +3407,16 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 1;
 		break;
 	}
+	/* freebsd32_fspacectl */
+	case 580: {
+		struct freebsd32_fspacectl_args *p = params;
+		iarg[0] = p->fd; /* int */
+		iarg[1] = p->cmd; /* int */
+		uarg[2] = (intptr_t) p->range; /* struct spacectl_range * */
+		iarg[3] = p->flags; /* int */
+		*n_args = 4;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -9183,6 +9193,25 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* freebsd32_fspacectl */
+	case 580:
+		switch(ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "int";
+			break;
+		case 2:
+			p = "userland struct spacectl_range *";
+			break;
+		case 3:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -11099,6 +11128,11 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* freebsd32_aio_readv */
 	case 579:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* freebsd32_fspacectl */
+	case 580:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
