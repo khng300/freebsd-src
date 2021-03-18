@@ -104,7 +104,6 @@ static fo_poll_t	vn_poll;
 static fo_kqfilter_t	vn_kqfilter;
 static fo_close_t	vn_closefile;
 static fo_mmap_t	vn_mmap;
-static fo_fallocate_t	vn_fallocate;
 static fo_fspacectl_t	vn_fspacectl;
 
 struct 	fileops vnops = {
@@ -122,7 +121,6 @@ struct 	fileops vnops = {
 	.fo_seek = vn_seek,
 	.fo_fill_kinfo = vn_fill_kinfo,
 	.fo_mmap = vn_mmap,
-	.fo_fallocate = vn_fallocate,
 	.fo_fspacectl = vn_fspacectl,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
@@ -3352,7 +3350,8 @@ out:
 }
 
 static int
-vn_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
+vn_fallocate(struct file *fp, off_t offset, off_t len, int flags,
+    struct ucred *active_cred, struct thread *td)
 {
 	struct mount *mp;
 	struct vnode *vp;
@@ -3363,8 +3362,14 @@ vn_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 #endif
 
 	vp = fp->f_vnode;
+	error = 0;
+
+	if (offset < 0 || len <= 0 || (flags & ~SPACECTL_F_SUPPORTED) != 0)
+		return (EINVAL);
 	if (vp->v_type != VREG)
 		return (ENODEV);
+
+	len = omin(len, OFF_MAX - offset);
 
 	/* Allocating blocks may take a long time, so iterate. */
 	for (;;) {
@@ -3388,17 +3393,14 @@ vn_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		}
 #endif
 #ifdef MAC
-		error = mac_vnode_check_write(td->td_ucred, fp->f_cred, vp);
+		error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
 		if (error == 0)
 #endif
-			error = VOP_ALLOCATE(vp, &offset, &len);
+			error = VOP_ALLOCATE(vp, &offset, &len, flags,
+			    active_cred);
 		VOP_UNLOCK(vp);
 		vn_finished_write(mp);
 
-		if (olen + ooffset != offset + len) {
-			panic("offset + len changed from %jx/%jx to %jx/%jx",
-			    ooffset, olen, offset, len);
-		}
 		if (error != 0 || len == 0)
 			break;
 		KASSERT(olen > len, ("Iteration did not make progress?"));
@@ -3510,10 +3512,13 @@ vn_fspacectl(struct file *fp, int cmd, off_t offset, off_t len, int flags,
 
 	vp = fp->f_vnode;
 
-	if (cmd != SPACECTL_DEALLOC)
+	if (cmd != SPACECTL_ALLOC && cmd != SPACECTL_DEALLOC)
 		return (EINVAL);
 
 	switch (cmd) {
+	case SPACECTL_ALLOC:
+		error = vn_fallocate(fp, offset, len, flags, active_cred, td);
+		break;
 	case SPACECTL_DEALLOC:
 		error = vn_deallocate_impl(vp, offset, len, flags, 0, true,
 		    active_cred, fp->f_cred, td);

@@ -953,6 +953,7 @@ vop_stdallocate(struct vop_allocate_args *ap)
 	uint8_t *buf;
 	struct thread *td;
 	struct vnode *vp;
+	struct ucred *cred;
 	size_t iosize;
 	int error;
 
@@ -963,8 +964,9 @@ vop_stdallocate(struct vop_allocate_args *ap)
 	vp = ap->a_vp;
 	len = *ap->a_len;
 	offset = *ap->a_offset;
+	cred = ap->a_cred;
 
-	error = VOP_GETATTR(vp, vap, td->td_ucred);
+	error = VOP_GETATTR(vp, vap, cred);
 	if (error != 0)
 		goto out;
 	fsize = vap->va_size;
@@ -988,28 +990,35 @@ vop_stdallocate(struct vop_allocate_args *ap)
 	if (error != 0)
 		goto out;
 	if (maxfilesize) {
-		if (offset > maxfilesize || len > maxfilesize ||
-		    offset + len > maxfilesize) {
+		if ((offset > maxfilesize || len > maxfilesize ||
+		    offset + len > maxfilesize) &&
+		    (ap->a_flags & SPACECTL_F_CANEXTEND) == 0) {
 			error = EFBIG;
 			goto out;
 		}
 	} else
 #endif
-	if (offset + len > vap->va_size) {
+	if ((u_quad_t)offset + len > vap->va_size &&
+	    ap->a_flags & SPACECTL_F_CANEXTEND) {
 		/*
 		 * Test offset + len against the filesystem's maxfilesize.
 		 */
 		VATTR_NULL(vap);
 		vap->va_size = offset + len;
-		error = VOP_SETATTR(vp, vap, td->td_ucred);
+		error = VOP_SETATTR(vp, vap, cred);
 		if (error != 0)
 			goto out;
 		VATTR_NULL(vap);
 		vap->va_size = fsize;
-		error = VOP_SETATTR(vp, vap, td->td_ucred);
+		error = VOP_SETATTR(vp, vap, cred);
 		if (error != 0)
 			goto out;
 	}
+
+	if ((ap->a_flags & SPACECTL_F_CANEXTEND) == 0)
+		len = omin(len, vap->va_size - offset);
+	if (len == 0)
+		goto out;
 
 	for (;;) {
 		/*
@@ -1032,7 +1041,7 @@ vop_stdallocate(struct vop_allocate_args *ap)
 			auio.uio_segflg = UIO_SYSSPACE;
 			auio.uio_rw = UIO_READ;
 			auio.uio_td = td;
-			error = VOP_READ(vp, &auio, 0, td->td_ucred);
+			error = VOP_READ(vp, &auio, 0, cred);
 			if (error != 0)
 				break;
 			if (auio.uio_resid > 0) {
@@ -1053,7 +1062,7 @@ vop_stdallocate(struct vop_allocate_args *ap)
 		auio.uio_rw = UIO_WRITE;
 		auio.uio_td = td;
 
-		error = VOP_WRITE(vp, &auio, 0, td->td_ucred);
+		error = VOP_WRITE(vp, &auio, 0, cred);
 		if (error != 0)
 			break;
 

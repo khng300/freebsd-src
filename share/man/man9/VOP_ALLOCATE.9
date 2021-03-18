@@ -37,7 +37,7 @@
 .In sys/param.h
 .In sys/vnode.h
 .Ft int
-.Fn VOP_ALLOCATE "struct vnode *vp" "off_t *offset" "off_t *len"
+.Fn VOP_ALLOCATE "struct vnode *vp" "off_t *offset" "off_t *len" "int flags" "struct ucred *cred"
 .Sh DESCRIPTION
 This call allocates storage for a range of offsets in a file.
 It is used to implement the
@@ -52,6 +52,8 @@ The vnode of the file.
 The start of the range to allocate storage for in the file.
 .It Fa len
 The length of the range to allocate storage for in the file.
+.It Fa flags
+The parameter to control the behavior of this call.
 .El
 .Pp
 The

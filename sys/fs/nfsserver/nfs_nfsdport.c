@@ -6335,7 +6335,8 @@ nfsvno_allocate(struct vnode *vp, off_t off, off_t len, struct ucred *cred,
 	 */
 	trycnt = 0;
 	while (error == 0 && len > 0 && trycnt++ < 20)
-		error = VOP_ALLOCATE(vp, &off, &len);
+		error = VOP_ALLOCATE(vp, &off, &len, SPACECTL_F_CANEXTEND,
+		    cred);
 	if (error == 0 && len > 0)
 		error = NFSERR_IO;
 	NFSEXITCODE(error);

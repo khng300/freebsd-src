@@ -3614,6 +3614,12 @@ nfs_allocate(struct vop_allocate_args *ap)
 	struct nfsmount *nmp;
 	int attrflag, error, ret;
 
+	if ((ap->a_flags & SPACECTL_F_CANEXTEND) == 0)
+		*ap->a_len = omin(
+		    *ap->a_len, VTONFS(vp)->n_size - *ap->a_offset);
+	if (*ap->a_len == 0)
+		return (0);
+
 	attrflag = 0;
 	nmp = VFSTONFS(vp->v_mount);
 	mtx_lock(&nmp->nm_mtx);
@@ -3627,7 +3633,7 @@ nfs_allocate(struct vop_allocate_args *ap)
 		error = ncl_flush(vp, MNT_WAIT, td, 1, 0);
 		if (error == 0)
 			error = nfsrpc_allocate(vp, *ap->a_offset, *ap->a_len,
-			    &nfsva, &attrflag, td->td_ucred, td, NULL);
+			    &nfsva, &attrflag, ap->a_cred, td, NULL);
 		if (error == 0) {
 			*ap->a_offset += *ap->a_len;
 			*ap->a_len = 0;

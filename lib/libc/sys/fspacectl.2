@@ -64,6 +64,16 @@ The operation specified by the
 .Fa cmd
 argument may be one of:
 .Bl -tag -width SPACECTL_DEALLOC
+.It Dv SPACECTL_ALLOC
+Back a region in the file specified by the
+.Fa range
+argument within the file system space.
+Subsequent operations in the region will not fail due to lack of free space in
+the file system.
+This operation is used to implement
+.Xr posix_fallocate 2 .
+Content will remain the same for a non-hole region.
+Holes will be converted to non-hole region with zeroes.
 .It Dv SPACECTL_DEALLOC
 Zero a region in the file specified by the
 .Fa range
@@ -80,7 +90,18 @@ file system space deallocation may be performed in the given region.
 .Pp
 The
 .Fa flags
-argument needs to be the value 0 currently.
+argument may include one or more of the following:
+.Bl -tag -width SPACECTL_F_CANEXTEND
+.It Dv SPACECTL_F_CANEXTEND
+The operation can extend the file size if
+.Fa range->r_offset
++
+.Fa range->r_len
+is greater than the current file size.
+This flag is supported by the
+.Dv SPACECTL_ALLOC
+operation.
+.El
 .Pp
 The call does not return partial success if a signal is caught during execution.
 .Sh RETURN VALUES

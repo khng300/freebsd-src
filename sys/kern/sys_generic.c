@@ -855,8 +855,9 @@ kern_posix_fallocate(struct thread *td, int fd, off_t offset, off_t len)
 		goto out;
 	}
 
-	error = fo_fallocate(fp, offset, len, td);
- out:
+	error = fo_fspacectl(fp, SPACECTL_ALLOC, offset, len,
+	    SPACECTL_F_CANEXTEND, td->td_ucred, td);
+out:
 	fdrop(fp, td);
 	return (error);
 }
@@ -889,7 +890,7 @@ kern_fspacectl(struct thread *td, int fd, int cmd, struct spacectl_range *range,
 	AUDIT_ARG_CMD(cmd);
 	AUDIT_ARG_FFLAGS(flags);
 
-	if (cmd != SPACECTL_DEALLOC ||
+	if ((cmd != SPACECTL_ALLOC && cmd != SPACECTL_DEALLOC) ||
 	    range->r_offset < 0 || range->r_len < 0 ||
 	    (flags & ~SPACECTL_F_SUPPORTED) != 0)
 		return (EINVAL);

@@ -362,11 +362,13 @@ struct spacectl_range {
  * Commands for fspacectl(2)
  */
 #define SPACECTL_DEALLOC	0	/* deallocate space */
+#define SPACECTL_ALLOC		1	/* allocate space */
 
 /*
  * fspacectl(2) flags
  */
-#define SPACECTL_F_SUPPORTED	0
+#define SPACECTL_F_CANEXTEND	(1)
+#define SPACECTL_F_SUPPORTED	(SPACECTL_F_CANEXTEND)
 #endif
 
 #ifndef _KERNEL

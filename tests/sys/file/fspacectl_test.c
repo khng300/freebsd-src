@@ -177,6 +177,46 @@ check_content_dealloc(int fd, off_t hole_start, off_t hole_len, off_t file_sz)
 	return (error);
 }
 
+static int
+check_hole_alloc(int fd, off_t alloc_start, off_t alloc_len, off_t file_sz)
+{
+	off_t dataoff, holeoff;
+	struct stat statbuf;
+
+	if (alloc_start + alloc_len < alloc_start)
+		alloc_len = OFF_MAX - alloc_start;
+
+	dataoff = lseek(fd, alloc_start, SEEK_DATA);
+	if (dataoff == -1)
+		return (1);
+	holeoff = lseek(fd, alloc_start, SEEK_HOLE);
+	if (holeoff == -1)
+		return (1);
+
+	/*
+	 * Check if the start offset of allocated region within file size is
+	 * legit
+	 */
+	if (dataoff != alloc_start && dataoff < file_sz)
+		return (1);
+	/*
+	 * Check if the end offset of allocated region within file size is
+	 * legit
+	 */
+	if (holeoff < alloc_start + alloc_len && holeoff < file_sz)
+		return (1);
+
+	/*
+	 * Check file size matches with expected file size.
+	 */
+	if (fstat(fd, &statbuf) == -1)
+		return (1);
+	if (statbuf.st_size != file_sz)
+		return (1);
+
+	return (0);
+}
+
 /*
  * Check aligned deallocation
  */
@@ -317,6 +357,149 @@ ATF_TC_BODY(unaligned_dealloc_eof, tc)
 	ATF_REQUIRE(close(fd) == 0);
 }
 
+/*
+ * Check aligned allocation
+ */
+ATF_TC_WITHOUT_HEAD(aligned_alloc);
+ATF_TC_BODY(aligned_alloc, tc)
+{
+	struct spacectl_range range;
+	blksize_t blocksize;
+	int fd;
+
+	ATF_REQUIRE((blocksize = fd_get_blksize()) != -1);
+	range.r_offset = blocksize;
+	range.r_len = (file_max_blocks - 1) * blocksize - range.r_offset;
+
+	ATF_REQUIRE((fd = open("sys_fspacectl_testfile",
+			 O_CREAT | O_RDWR | O_TRUNC, 0600)) != -1);
+	ATF_REQUIRE(ftruncate(fd, file_max_blocks * blocksize) == 0);
+	ATF_CHECK(fspacectl(fd, SPACECTL_ALLOC, &range, 0) == 0);
+	ATF_CHECK(check_hole_alloc(fd, range.r_offset, range.r_len,
+		      file_max_blocks * blocksize) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
+/*
+ * Check unaligned allocation
+ */
+ATF_TC_WITHOUT_HEAD(unaligned_alloc);
+ATF_TC_BODY(unaligned_alloc, tc)
+{
+	struct spacectl_range range;
+	blksize_t blocksize;
+	int fd;
+
+	ATF_REQUIRE((blocksize = fd_get_blksize()) != -1);
+	range.r_offset = blocksize / 2;
+	range.r_len = (file_max_blocks - 1) * blocksize + blocksize / 2 -
+	    range.r_offset;
+
+	ATF_REQUIRE((fd = open("sys_fspacectl_testfile",
+			 O_CREAT | O_RDWR | O_TRUNC, 0600)) != -1);
+	ATF_REQUIRE(ftruncate(fd, file_max_blocks * blocksize) == 0);
+	ATF_CHECK(fspacectl(fd, SPACECTL_ALLOC, &range, 0) == 0);
+	ATF_CHECK(check_hole_alloc(fd, range.r_offset, range.r_len,
+		      file_max_blocks * blocksize) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
+/*
+ * Check aligned allocation and extending
+ */
+ATF_TC_WITHOUT_HEAD(aligned_alloc_canextend);
+ATF_TC_BODY(aligned_alloc_canextend, tc)
+{
+	struct spacectl_range range;
+	blksize_t blocksize;
+	int fd;
+
+	ATF_REQUIRE((blocksize = fd_get_blksize()) != -1);
+	range.r_offset = blocksize;
+	range.r_len = (file_max_blocks + 1) * blocksize - range.r_offset;
+
+	ATF_REQUIRE((fd = open("sys_fspacectl_testfile",
+			 O_CREAT | O_RDWR | O_TRUNC, 0600)) != -1);
+	ATF_REQUIRE(ftruncate(fd, file_max_blocks * blocksize) == 0);
+	ATF_CHECK(
+	    fspacectl(fd, SPACECTL_ALLOC, &range, SPACECTL_F_CANEXTEND) == 0);
+	ATF_CHECK(check_hole_alloc(fd, range.r_offset, range.r_len,
+		      (file_max_blocks + 1) * blocksize) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
+/*
+ * Check unaligned allocation and extending
+ */
+ATF_TC_WITHOUT_HEAD(unaligned_alloc_canextend);
+ATF_TC_BODY(unaligned_alloc_canextend, tc)
+{
+	struct spacectl_range range;
+	blksize_t blocksize;
+	int fd;
+
+	ATF_REQUIRE((blocksize = fd_get_blksize()) != -1);
+	range.r_offset = blocksize / 2;
+	range.r_len = file_max_blocks * blocksize + blocksize / 2 -
+	    range.r_offset;
+
+	ATF_REQUIRE((fd = open("sys_fspacectl_testfile",
+			 O_CREAT | O_RDWR | O_TRUNC, 0600)) != -1);
+	ATF_REQUIRE(ftruncate(fd, file_max_blocks * blocksize) == 0);
+	ATF_CHECK(
+	    fspacectl(fd, SPACECTL_ALLOC, &range, SPACECTL_F_CANEXTEND) == 0);
+	ATF_CHECK(check_hole_alloc(fd, range.r_offset, range.r_len,
+		      file_max_blocks * blocksize + blocksize / 2) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
+/*
+ * Check aligned allocation around EOF
+ */
+ATF_TC_WITHOUT_HEAD(aligned_alloc_no_canextend);
+ATF_TC_BODY(aligned_alloc_no_canextend, tc)
+{
+	struct spacectl_range range;
+	blksize_t blocksize;
+	int fd;
+
+	ATF_REQUIRE((blocksize = fd_get_blksize()) != -1);
+	range.r_offset = blocksize;
+	range.r_len = (file_max_blocks + 1) * blocksize - range.r_offset;
+
+	ATF_REQUIRE((fd = open("sys_fspacectl_testfile",
+			 O_CREAT | O_RDWR | O_TRUNC, 0600)) != -1);
+	ATF_REQUIRE(ftruncate(fd, file_max_blocks * blocksize) == 0);
+	ATF_CHECK(fspacectl(fd, SPACECTL_ALLOC, &range, 0) == 0);
+	ATF_CHECK(check_hole_alloc(fd, range.r_offset, range.r_len,
+		      file_max_blocks * blocksize) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
+/*
+ * Check unaligned allocation around EOF
+ */
+ATF_TC_WITHOUT_HEAD(unaligned_alloc_no_canextend);
+ATF_TC_BODY(unaligned_alloc_no_canextend, tc)
+{
+	struct spacectl_range range;
+	blksize_t blocksize;
+	int fd;
+
+	ATF_REQUIRE((blocksize = fd_get_blksize()) != -1);
+	range.r_offset = blocksize / 2;
+	range.r_len = file_max_blocks * blocksize + blocksize / 2 -
+	    range.r_offset;
+
+	ATF_REQUIRE((fd = open("sys_fspacectl_testfile",
+			 O_CREAT | O_RDWR | O_TRUNC, 0600)) != -1);
+	ATF_REQUIRE(ftruncate(fd, file_max_blocks * blocksize) == 0);
+	ATF_CHECK(fspacectl(fd, SPACECTL_ALLOC, &range, 0) == 0);
+	ATF_CHECK(check_hole_alloc(fd, range.r_offset, range.r_len,
+		      file_max_blocks * blocksize) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, aligned_dealloc);
@@ -325,6 +508,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, unaligned_dealloc_eof);
 	ATF_TP_ADD_TC(tp, aligned_dealloc_offmax);
 	ATF_TP_ADD_TC(tp, unaligned_dealloc_offmax);
+
+	ATF_TP_ADD_TC(tp, aligned_alloc);
+	ATF_TP_ADD_TC(tp, unaligned_alloc);
+	ATF_TP_ADD_TC(tp, aligned_alloc_canextend);
+	ATF_TP_ADD_TC(tp, unaligned_alloc_canextend);
+	ATF_TP_ADD_TC(tp, aligned_alloc_no_canextend);
+	ATF_TP_ADD_TC(tp, unaligned_alloc_no_canextend);
 
 	return atf_no_error();
 }
