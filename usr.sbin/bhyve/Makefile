@@ -3,6 +3,8 @@
 #
 
 .include <src.opts.mk>
+# For NVIDIA hacking
+CFLAGS+=-DWITHOUT_CAPSICUM
 CFLAGS+=-I${.CURDIR}/../../contrib/lib9p
 CFLAGS+=-I${SRCTOP}/sys
 .PATH:  ${SRCTOP}/sys/cam/ctl
@@ -126,7 +128,8 @@ SRCS_3DSUPPORT=	\
 	contrib/libepoxy/vendor/src/dispatch_common.c		\
 	contrib/libepoxy/vendor/src/dispatch_egl.c		\
 	contrib/libepoxy/generated/src/gl_generated_dispatch.c	\
-	contrib/libepoxy/generated/src/egl_generated_dispatch.c
+	contrib/libepoxy/generated/src/egl_generated_dispatch.c	\
+	pci_virtio_gpu.c
 
 SRCS_3DSUPPORT+=	${SRCS_VIRGLRENDERER}
 

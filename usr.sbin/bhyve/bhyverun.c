@@ -181,6 +181,8 @@ static const char * const vmx_exit_reason_desc[] = {
 	[EXIT_REASON_XRSTORS] = "XRSTORS"
 };
 
+extern void pci_vtgpu_exit_gpus();
+
 typedef int (*vmexit_handler_t)(struct vmctx *, struct vm_exit *, int *vcpu);
 extern int vmexit_task_switch(struct vmctx *, struct vm_exit *, int *vcpu);
 
@@ -893,6 +895,9 @@ vmexit_suspend(struct vmctx *ctx, struct vm_exit *vmexit, int *pvcpu)
 	}
 	pthread_mutex_unlock(&resetcpu_mtx);
 
+    /* Destory all the gpu instances */
+    pci_vtgpu_exit_gpus();
+
 	switch (how) {
 	case VM_SUSPEND_RESET:
 		exit(0);
@@ -990,6 +995,7 @@ vm_loop(struct vmctx *ctx, int vcpu, uint64_t startrip)
 		case VMEXIT_ABORT:
 			abort();
 		default:
+            pci_vtgpu_exit_gpus();
 			exit(4);
 		}
 	}
