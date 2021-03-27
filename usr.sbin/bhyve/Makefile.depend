@@ -18,6 +18,8 @@ DIRDEPS = \
 	lib/libvmmapi \
 	lib/libxo \
 	lib/libz \
+	secure/lib/libcrypto \
+	lib/msun \
 
 
 .include <dirdeps.mk>

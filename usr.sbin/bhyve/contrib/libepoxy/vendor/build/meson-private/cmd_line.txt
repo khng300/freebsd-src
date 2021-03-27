@@ -1,0 +1,7 @@
+[options]
+glx = no
+x11 = false
+tests = false
+
+[properties]
+
