@@ -653,8 +653,8 @@ pci_vtnet_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 		return (1);
 	}
 
-	/* use BAR 0 to map config regs in IO space */
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	/* Virtio-legacy: use BAR 0 to map config regs in IO space */
+	vi_setup_pci_bar(&sc->vsc_vs, VIRTIO_LEGACY_BAR);
 
 	sc->resetting = 0;
 
@@ -807,6 +807,9 @@ done:
 static struct pci_devemu pci_de_vnet = {
 	.pe_emu = 	"virtio-net",
 	.pe_init =	pci_vtnet_init,
+	.pe_legacy_config = netbe_legacy_config,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT
