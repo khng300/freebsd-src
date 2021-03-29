@@ -216,7 +216,11 @@ static struct virtio_consts vtblk_vi_consts = {
 	pci_vtblk_cfgread,	/* read PCI config */
 	pci_vtblk_cfgwrite,	/* write PCI config */
 	NULL,			/* apply negotiated features */
-	VTBLK_S_HOSTCAPS,	/* our capabilities */
+	VTBLK_S_HOSTCAPS,	/* our capabilities (legacy) */
+	VTBLK_S_HOSTCAPS,	/* our capabilities (modern) */
+	true,			/* Enable legacy */
+	true,			/* Enable modern */
+	2,			/* PCI BAR# for modern */
 #ifdef BHYVE_SNAPSHOT
 	pci_vtblk_pause,	/* pause blockif threads */
 	pci_vtblk_resume,	/* resume blockif threads */
@@ -485,8 +489,10 @@ pci_vtblk_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	bcopy(&vtblk_vi_consts, &sc->vbsc_consts, sizeof (vtblk_vi_consts));
-	if (blockif_candelete(sc->bc))
-		sc->vbsc_consts.vc_hv_caps |= VTBLK_F_DISCARD;
+	if (blockif_candelete(sc->bc)) {
+		sc->vbsc_consts.vc_hv_caps_legacy |= VTBLK_F_DISCARD;
+		sc->vbsc_consts.vc_hv_caps_modern |= VTBLK_F_DISCARD;
+	}
 
 	pthread_mutex_init(&sc->vsc_mtx, NULL);
 
@@ -541,7 +547,8 @@ pci_vtblk_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	 * have the device, class, and subdev_0 as fields in
 	 * the virtio constants structure.
 	 */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_BLOCK);
+	pci_set_cfgdata16(pi, PCIR_DEVICE, sc->vbsc_consts.vc_en_legacy ?
+	    VIRTIO_DEV_BLOCK : vi_get_modern_pci_devid(VIRTIO_ID_BLOCK));
 	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_BLOCK);
@@ -552,7 +559,7 @@ pci_vtblk_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 		free(sc);
 		return (1);
 	}
-	vi_set_io_bar(&sc->vbsc_vs, 0);
+	vi_setup_pci_bar(&sc->vbsc_vs);
 	blockif_register_resize_callback(sc->bc, pci_vtblk_resized, sc);
 	return (0);
 }
@@ -581,6 +588,8 @@ struct pci_devemu pci_de_vblk = {
 	.pe_emu =	"virtio-blk",
 	.pe_init =	pci_vtblk_init,
 	.pe_legacy_config = blockif_legacy_config,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT

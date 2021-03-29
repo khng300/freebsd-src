@@ -92,7 +92,11 @@ static struct virtio_consts vtrnd_vi_consts = {
 	NULL,			/* read virtio config */
 	NULL,			/* write virtio config */
 	NULL,			/* apply negotiated features */
-	0,			/* our capabilities */
+	0,			/* our capabilities (legacy) */
+	0,			/* our capabilities (modern) */
+	true,			/* Enable legacy */
+	true,			/* Enable modern */
+	2,			/* PCI BAR# for modern */
 };
 
 
@@ -187,7 +191,8 @@ pci_vtrnd_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vrsc_fd = fd;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_RANDOM);
+	pci_set_cfgdata16(pi, PCIR_DEVICE, sc->vrsc_vs.vs_vc->vc_en_legacy ?
+	    VIRTIO_DEV_RANDOM : VIRTIO_ID_ENTROPY);
 	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_CRYPTO);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_ENTROPY);
@@ -195,7 +200,7 @@ pci_vtrnd_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vrsc_vs, 1, fbsdrun_virtio_msix()))
 		return (1);
-	vi_set_io_bar(&sc->vrsc_vs, 0);
+	vi_setup_pci_bar(&sc->vrsc_vs);
 
 	return (0);
 }
@@ -204,6 +209,8 @@ pci_vtrnd_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 struct pci_devemu pci_de_vrnd = {
 	.pe_emu =	"virtio-rnd",
 	.pe_init =	pci_vtrnd_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT

@@ -72,9 +72,12 @@ __FBSDID("$FreeBSD$");
 #define VTNET_MIN_MTU	ETHERMIN
 #define VTNET_MAX_MTU	65535
 
-#define VTNET_S_HOSTCAPS      \
+#define VTNET_S_HOSTCAPS_LEGACY      \
   ( VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | \
     VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_RING_F_INDIRECT_DESC)
+#define VTNET_S_HOSTCAPS_MODERN      \
+  ( VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | \
+    VIRTIO_RING_F_INDIRECT_DESC)
 
 /*
  * PCI config-space "registers"
@@ -153,7 +156,11 @@ static struct virtio_consts vtnet_vi_consts = {
 	pci_vtnet_cfgread,	/* read PCI config */
 	pci_vtnet_cfgwrite,	/* write PCI config */
 	pci_vtnet_neg_features,	/* apply negotiated features */
-	VTNET_S_HOSTCAPS,	/* our capabilities */
+	VTNET_S_HOSTCAPS_LEGACY, /* our capabilities (legacy) */
+	VTNET_S_HOSTCAPS_MODERN, /* our capabilities (modern) */
+	true,			/* Enable legacy */
+	true,			/* Enable modern */
+	2,			/* PCI BAR# for modern */
 #ifdef BHYVE_SNAPSHOT
 	pci_vtnet_pause,	/* pause rx/tx threads */
 	pci_vtnet_resume,	/* resume rx/tx threads */
@@ -612,7 +619,8 @@ pci_vtnet_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 			free(sc);
 			return (err);
 		}
-		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MTU;
+		sc->vsc_consts.vc_hv_caps_legacy |= VIRTIO_NET_F_MTU;
+		sc->vsc_consts.vc_hv_caps_modern |= VIRTIO_NET_F_MTU;
 	}
 	sc->vsc_config.mtu = mtu;
 
@@ -625,7 +633,9 @@ pci_vtnet_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 		}
 	}
 
-	sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MRG_RXBUF |
+	sc->vsc_consts.vc_hv_caps_legacy |= VIRTIO_NET_F_MRG_RXBUF |
+	    netbe_get_cap(sc->vsc_be);
+	sc->vsc_consts.vc_hv_caps_modern |= VIRTIO_NET_F_MRG_RXBUF |
 	    netbe_get_cap(sc->vsc_be);
 
 	/* 
@@ -635,7 +645,8 @@ pci_vtnet_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_config.max_virtqueue_pairs = 1;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_NET);
+	pci_set_cfgdata16(pi, PCIR_DEVICE, sc->vsc_consts.vc_en_legacy ?
+	    VIRTIO_DEV_NET : vi_get_modern_pci_devid(VIRTIO_ID_NETWORK));
 	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_NETWORK);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_NETWORK);
@@ -653,8 +664,8 @@ pci_vtnet_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 		return (1);
 	}
 
-	/* use BAR 0 to map config regs in IO space */
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	/* Virtio-legacy: use BAR 0 to map config regs in IO space */
+	vi_setup_pci_bar(&sc->vsc_vs);
 
 	sc->resetting = 0;
 
@@ -691,6 +702,8 @@ pci_vtnet_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 		 */
 		ptr = &sc->vsc_config.mac[offset];
 		memcpy(ptr, &value, size);
+
+		vq_devcfg_changed(&sc->vsc_vs);
 	} else {
 		/* silently ignore other writes */
 		DPRINTF(("vtnet: write to readonly reg %d", offset));
@@ -808,6 +821,8 @@ static struct pci_devemu pci_de_vnet = {
 	.pe_emu = 	"virtio-net",
 	.pe_init =	pci_vtnet_init,
 	.pe_legacy_config = netbe_legacy_config,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT

@@ -465,6 +465,9 @@ pci_vtinput_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 	/* select/subsel changed, query new config on next cfgread */
 	sc->vsc_config_valid = 0;
 
+	/* notify the guest the device configuration has been changed */
+	vq_devcfg_changed(&sc->vsc_vs);
+
 	return (0);
 }
 
@@ -747,7 +750,7 @@ pci_vtinput_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		goto failed;
 	/* add virtio register */
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	vi_setup_pci_bar(&sc->vsc_vs);
 
 	return (0);
 

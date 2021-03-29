@@ -177,7 +177,11 @@ static struct virtio_consts vtcon_vi_consts = {
 	pci_vtcon_cfgread,	/* read virtio config */
 	pci_vtcon_cfgwrite,	/* write virtio config */
 	pci_vtcon_neg_features,	/* apply negotiated features */
-	VTCON_S_HOSTCAPS,	/* our capabilities */
+	VTCON_S_HOSTCAPS,	/* our capabilities (legacy) */
+	VTCON_S_HOSTCAPS,	/* our capabilities (modern) */
+	true,			/* Enable legacy */
+	true,			/* Enable modern */
+	2,			/* PCI BAR# for modern */
 };
 
 
@@ -709,7 +713,8 @@ pci_vtcon_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_CONSOLE);
+	pci_set_cfgdata16(pi, PCIR_DEVICE, sc->vsc_vs.vs_vc->vc_en_legacy ?
+	    VIRTIO_DEV_CONSOLE : vi_get_modern_pci_devid(VIRTIO_ID_CONSOLE));
 	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_SIMPLECOMM);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_CONSOLE);
@@ -717,7 +722,7 @@ pci_vtcon_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		return (1);
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	vi_setup_pci_bar(&sc->vsc_vs);
 
 	/* create control port */
 	sc->vsc_control_port.vsp_sc = sc;
@@ -753,6 +758,8 @@ pci_vtcon_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 struct pci_devemu pci_de_vcon = {
 	.pe_emu =	"virtio-console",
 	.pe_init =	pci_vtcon_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read
 };

@@ -256,7 +256,11 @@ static struct virtio_consts vtscsi_vi_consts = {
 	pci_vtscsi_cfgread,			/* read virtio config */
 	pci_vtscsi_cfgwrite,			/* write virtio config */
 	pci_vtscsi_neg_features,		/* apply negotiated features */
-	0,					/* our capabilities */
+	0,					/* our capabilities (legacy) */
+	0,					/* our capabilities (modern) */
+	true,					/* Enable legacy */
+	true,					/* Enable modern */
+	2,					/* PCI BAR# for modern */
 };
 
 static void *
@@ -717,7 +721,8 @@ pci_vtscsi_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_SCSI);
+	pci_set_cfgdata16(pi, PCIR_DEVICE, sc->vss_vs.vs_vc->vc_en_legacy ?
+	    VIRTIO_DEV_SCSI : VIRTIO_ID_SCSI);
 	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_SCSI);
@@ -725,7 +730,7 @@ pci_vtscsi_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vss_vs, 1, fbsdrun_virtio_msix()))
 		return (1);
-	vi_set_io_bar(&sc->vss_vs, 0);
+	vi_setup_pci_bar(&sc->vss_vs);
 
 	return (0);
 }
@@ -735,6 +740,8 @@ struct pci_devemu pci_de_vscsi = {
 	.pe_emu =	"virtio-scsi",
 	.pe_init =	pci_vtscsi_init,
 	.pe_legacy_config = pci_vtscsi_legacy_config,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read
 };

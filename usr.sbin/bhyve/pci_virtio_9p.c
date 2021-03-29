@@ -113,7 +113,11 @@ static struct virtio_consts vt9p_vi_consts = {
 	pci_vt9p_cfgread,	/* read virtio config */
 	NULL,			/* write virtio config */
 	pci_vt9p_neg_features,	/* apply negotiated features */
-	(1 << 0),		/* our capabilities */
+	(1 << 0),		/* our capabilities (legacy) */
+	(1 << 0),		/* our capabilities (modern) */
+	true,			/* Enable legacy */
+	true,			/* Enable modern */
+	2,			/* PCI BAR# for modern */
 };
 
 
@@ -329,7 +333,8 @@ pci_vt9p_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_vq.vq_qsize = VT9P_RINGSZ;
 
 	/* initialize config space */
-	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_9P);
+	pci_set_cfgdata16(pi, PCIR_DEVICE, sc->vsc_vs.vs_vc->vc_en_legacy ?
+	    VIRTIO_DEV_9P : vi_get_modern_pci_devid(VIRTIO_ID_9P));
 	pci_set_cfgdata16(pi, PCIR_VENDOR, VIRTIO_VENDOR);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_STORAGE);
 	pci_set_cfgdata16(pi, PCIR_SUBDEV_0, VIRTIO_ID_9P);
@@ -337,7 +342,7 @@ pci_vt9p_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		return (1);
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	vi_setup_pci_bar(&sc->vsc_vs);
 
 	return (0);
 }
@@ -346,6 +351,8 @@ struct pci_devemu pci_de_v9p = {
 	.pe_emu =	"virtio-9p",
 	.pe_legacy_config = pci_vt9p_legacy_config,
 	.pe_init =	pci_vt9p_init,
+	.pe_cfgwrite =	vi_pci_cfgwrite,
+	.pe_cfgread =	vi_pci_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read
 };
