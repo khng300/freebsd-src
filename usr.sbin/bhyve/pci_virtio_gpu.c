@@ -46,6 +46,8 @@ __FBSDID("$FreeBSD$");
 #include <pthread_np.h>
 
 #include "bhyverun.h"
+#include "config.h"
+#include "debug.h"
 #include "pci_emul.h"
 #include "virtio.h"
 #include "iov.h"
@@ -2403,89 +2405,96 @@ pci_vtgpu_usage(char *opt)
 }
 
 static int
-pci_vtgpu_parse_opts(struct pci_vtgpu_softc *sc, char *opts)
+pci_vtgpu_parse_opts(struct pci_vtgpu_softc *sc, nvlist_t *nvl)
 {
-	char	*uopts, *xopts, *config;
-	char	*tmpstr;
-	int	ret;
+	const char *value;
+	char *cp;
+	int ret;
 
 	ret = 0;
-	uopts = strdup(opts);
-	for (xopts = strtok(uopts, ",");
-	     xopts != NULL;
-	     xopts = strtok(NULL, ",")) {
-		if (strcmp(xopts, "wait") == 0) {
-			sc->rfb_wait = 1;
-			continue;
-		}
 
-		if ((config = strchr(xopts, '=')) == NULL) {
-			pci_vtgpu_usage(xopts);
-			ret = -1;
-			goto done;
-		}
+	sc->rfb_wait = get_config_bool_node_default(nvl, "wait", false);
 
-		*config++ = '\0';
-
-		DPRINTF(("pci_vtgpu option %s = %s\r\n",
-		   xopts, config));
-
-		if (!strcmp(xopts, "tcp") || !strcmp(xopts, "rfb")) {
-			/*
-			 * IPv4 -- host-ip:port
-			 * IPv6 -- [host-ip%zone]:port
-			 * XXX for now port is mandatory.
-			 */
-			tmpstr = strsep(&config, "]");
-			if (config) {
-				if (tmpstr[0] == '[')
-					tmpstr++;
-				sc->rfb_host = tmpstr;
-				if (config[0] == ':')
-					config++;
-				else {
-					pci_vtgpu_usage(xopts);
-					ret = -1;
-					goto done;
-				}
-				sc->rfb_port = atoi(config);
-			} else {
-				config = tmpstr;
-				tmpstr = strsep(&config, ":");
-				if (!config)
-					sc->rfb_port = atoi(tmpstr);
-				else {
-					sc->rfb_port = atoi(config);
-					sc->rfb_host = tmpstr;
-				}
+	/* Prefer "rfb" to "tcp". */
+	value = get_config_value_node(nvl, "rfb");
+	if (value == NULL)
+		value = get_config_value_node(nvl, "tcp");
+	if (value != NULL) {
+		/*
+		 * IPv4 -- host-ip:port
+		 * IPv6 -- [host-ip%zone]:port
+		 * XXX for now port is mandatory for IPv4.
+		 */
+		if (value[0] == '[') {
+			cp = strchr(value + 1, ']');
+			if (cp == NULL || cp == value + 1) {
+				EPRINTLN("fbuf: Invalid IPv6 address: \"%s\"",
+				    value);
+				return (-1);
 			}
-		} else if (!strcmp(xopts, "w")) {
-		        sc->vgsc_width = atoi(config);
-			if (sc->vgsc_width > VTGPU_SCREENSZ_MAX_WIDTH) {
-				pci_vtgpu_usage(xopts);
-				ret = -1;
-				goto done;
-			} else if (sc->vgsc_width == 0)
-				sc->vgsc_width = VTGPU_SCREENSZ_DEFAULT_WIDTH;
-		} else if (!strcmp(xopts, "h")) {
-			sc->vgsc_height = atoi(config);
-			if (sc->vgsc_height > VTGPU_SCREENSZ_MAX_HEIGHT) {
-				pci_vtgpu_usage(xopts);
-				ret = -1;
-				goto done;
-			} else if (sc->vgsc_height == 0)
-				sc->vgsc_height = VTGPU_SCREENSZ_DEFAULT_HEIGHT;
-		} else if (!strcmp(xopts, "password")) {
-			sc->rfb_password = config;
+			sc->rfb_host = strndup(value + 1, cp - (value + 1));
+			cp++;
+			if (*cp == ':') {
+				cp++;
+				if (*cp == '\0') {
+					EPRINTLN(
+					    "fbuf: Missing port number: \"%s\"",
+					    value);
+					return (-1);
+				}
+				sc->rfb_port = atoi(cp);
+			} else if (*cp != '\0') {
+				EPRINTLN("fbuf: Invalid IPv6 address: \"%s\"",
+				    value);
+				return (-1);
+			}
 		} else {
-			pci_vtgpu_usage(xopts);
-			ret = -1;
-			goto done;
+			cp = strchr(value, ':');
+			if (cp == NULL) {
+				sc->rfb_port = atoi(value);
+			} else {
+				sc->rfb_host = strndup(value, cp - value);
+				cp++;
+				if (*cp == '\0') {
+					EPRINTLN(
+					    "fbuf: Missing port number: \"%s\"",
+					    value);
+					return (-1);
+				}
+				sc->rfb_port = atoi(cp);
+			}
 		}
 	}
 
+	value = get_config_value_node(nvl, "w");
+	if (value != NULL) {
+		sc->vgsc_width = atoi(value);
+		if (sc->vgsc_width > VTGPU_SCREENSZ_MAX_WIDTH) {
+			EPRINTLN("virtio-gpu: width %d too large", sc->vgsc_width);
+			ret = -1;
+			goto done;
+		} else if (sc->vgsc_width == 0)
+			sc->vgsc_width = VTGPU_SCREENSZ_DEFAULT_WIDTH;
+	}
+
+	value = get_config_value_node(nvl, "h");
+	if (value != NULL) {
+		sc->vgsc_height = atoi(value);
+		if (sc->vgsc_height > VTGPU_SCREENSZ_MAX_HEIGHT) {
+			EPRINTLN("virtio-gpu: height %d too large", sc->vgsc_height);
+			ret = -1;
+			goto done;
+		} else if (sc->vgsc_height == 0)
+			sc->vgsc_height = VTGPU_SCREENSZ_DEFAULT_HEIGHT;
+	}
+
+	value = get_config_value_node(nvl, "password");
+	if (value != NULL)
+		sc->rfb_password = strdup(value);
+
 done:
 	return (ret);
+
 }
 
 int
@@ -2596,7 +2605,7 @@ pci_vtgpu_fini_eglmainctx(struct pci_vtgpu_softc *sc)
 }
 
 static int
-pci_vtgpu_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
+pci_vtgpu_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtgpu_softc *sc;
 	int error = 1;
@@ -2605,7 +2614,7 @@ pci_vtgpu_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 	if (sc == NULL)
 		return (1);
 
-	error = pci_vtgpu_parse_opts(sc, opts);
+	error = pci_vtgpu_parse_opts(sc, nvl);
 	if (error) {
 		error = 1;
 		goto done;

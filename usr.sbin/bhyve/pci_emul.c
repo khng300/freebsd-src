@@ -726,6 +726,24 @@ pci_emul_alloc_bar(struct pci_devinst *pdi, int idx, enum pcibar_type type,
 	return (0);
 }
 
+uint64_t
+pci_emul_alloc_gsm(uint64_t size)
+{
+	uint64_t *baseptr = &pci_emul_membase32;
+	uint64_t *limptr = &pci_emul_memlim32;
+
+	/* align addr */
+	const uint64_t addr = ((*limptr) - size) & ~(size - 1);
+
+	/* if limit < base ==> ENOMEM */
+	if ((*limptr) < (*baseptr))
+		return 0;
+
+	*limptr = addr;
+
+	return addr;
+}
+
 #define	CAP_START_OFFSET	0x40
 int
 pci_emul_add_capability(struct pci_devinst *pi, u_char *capdata, int caplen,
