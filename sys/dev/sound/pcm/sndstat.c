@@ -95,6 +95,10 @@ struct sndstat_userdev {
 	uint32_t rmaxrate;
 	uint32_t pfmts;
 	uint32_t rfmts;
+	uint32_t pminchn;
+	uint32_t pmaxchn;
+	uint32_t rminchn;
+	uint32_t rmaxchn;
 	nvlist_t *provider_nvl;
 };
 
@@ -326,15 +330,13 @@ sndstat_write(struct cdev *i_dev, struct uio *buf, int flag)
 
 static void
 sndstat_get_caps(struct snddev_info *d, bool play, uint32_t *min_rate,
-    uint32_t *max_rate, uint32_t *fmts)
+    uint32_t *max_rate, uint32_t *fmts, uint32_t *minchn, uint32_t *maxchn)
 {
 	struct pcm_channel *c;
+	unsigned int encoding;
 	int dir;
 
 	dir = play ? PCMDIR_PLAY : PCMDIR_REC;
-	*min_rate = 0;
-	*max_rate = 0;
-	*fmts = 0;
 
 	if (play && d->pvchancount > 0) {
 		*min_rate = *max_rate = d->pvchanrate;
@@ -346,25 +348,39 @@ sndstat_get_caps(struct snddev_info *d, bool play, uint32_t *min_rate,
 		return;
 	}
 
+	*min_rate = UINT32_MAX;
+	*max_rate = 0;
+	*minchn = UINT32_MAX;
+	*maxchn = 0;
+	encoding = 0;
 	CHN_FOREACH(c, d, channels.pcm) {
 		struct pcmchan_caps *caps;
+		int i;
 
 		if (c->direction != dir || (c->flags & CHN_F_VIRTUAL) != 0)
 			continue;
 
 		CHN_LOCK(c);
 		caps = chn_getcaps(c);
-		*min_rate = caps->minspeed;
-		*max_rate = caps->maxspeed;
-		*fmts = chn_getformats(c);
+		*min_rate = min(caps->minspeed, *min_rate);
+		*max_rate = max(caps->maxspeed, *max_rate);
+		for (i = 0; caps->fmtlist[i]; i++) {
+			encoding |= AFMT_ENCODING(caps->fmtlist[i]);
+			*minchn = min(AFMT_CHANNEL(encoding), *minchn);
+			*maxchn = max(AFMT_CHANNEL(encoding), *maxchn);
+		}
 		CHN_UNLOCK(c);
 	}
+	if (*min_rate == UINT32_MAX)
+		*min_rate = 0;
+	if (*minchn == UINT32_MAX)
+		*minchn = 0;
 }
 
 static int
 sndstat_build_sound4_nvlist(struct snddev_info *d, nvlist_t **dip, bool is_default)
 {
-	uint32_t maxrate, minrate, fmts;
+	uint32_t maxrate, minrate, fmts, minchn, maxchn;
 	nvlist_t *di = NULL, *sound4di = NULL;
 	int err;
 
@@ -391,15 +407,21 @@ sndstat_build_sound4_nvlist(struct snddev_info *d, nvlist_t **dip, bool is_defau
 	nvlist_add_number(di, SNDSTAT_LABEL_PCHAN, d->playcount);
 	nvlist_add_number(di, SNDSTAT_LABEL_RCHAN, d->reccount);
 	if (d->playcount > 0) {
-		sndstat_get_caps(d, true, &minrate, &maxrate, &fmts);
+		sndstat_get_caps(d, true, &minrate, &maxrate, &fmts, &minchn,
+		    &maxchn);
 		nvlist_add_number(di, SNDSTAT_LABEL_PMINRATE, minrate);
 		nvlist_add_number(di, SNDSTAT_LABEL_PMAXRATE, maxrate);
+		nvlist_add_number(di, SNDSTAT_LABEL_PMINCHN, minchn);
+		nvlist_add_number(di, SNDSTAT_LABEL_PMAXCHN, maxchn);
 		nvlist_add_number(di, SNDSTAT_LABEL_PFMTS, fmts);
 	}
 	if (d->reccount > 0) {
-		sndstat_get_caps(d, false, &minrate, &maxrate, &fmts);
+		sndstat_get_caps(d, false, &minrate, &maxrate, &fmts, &minchn,
+		    &maxchn);
 		nvlist_add_number(di, SNDSTAT_LABEL_RMINRATE, minrate);
 		nvlist_add_number(di, SNDSTAT_LABEL_RMAXRATE, maxrate);
+		nvlist_add_number(di, SNDSTAT_LABEL_RMINCHN, minchn);
+		nvlist_add_number(di, SNDSTAT_LABEL_RMAXCHN, maxchn);
 		nvlist_add_number(di, SNDSTAT_LABEL_RFMTS, fmts);
 	}
 
@@ -454,6 +476,10 @@ sndstat_build_userland_nvlist(struct sndstat_userdev *ud, nvlist_t **dip)
 		nvlist_add_number(
 				di, SNDSTAT_LABEL_PMAXRATE, ud->pmaxrate);
 		nvlist_add_number(
+				di, SNDSTAT_LABEL_PMINCHN, ud->pminchn);
+		nvlist_add_number(
+				di, SNDSTAT_LABEL_PMAXCHN, ud->pmaxchn);
+		nvlist_add_number(
 				di, SNDSTAT_LABEL_PFMTS, ud->pfmts);
 	}
 	if (ud->rchan != 0) {
@@ -461,6 +487,10 @@ sndstat_build_userland_nvlist(struct sndstat_userdev *ud, nvlist_t **dip)
 				di, SNDSTAT_LABEL_RMINRATE, ud->rminrate);
 		nvlist_add_number(
 				di, SNDSTAT_LABEL_RMAXRATE, ud->rmaxrate);
+		nvlist_add_number(
+				di, SNDSTAT_LABEL_RMINCHN, ud->rminchn);
+		nvlist_add_number(
+				di, SNDSTAT_LABEL_RMAXCHN, ud->rmaxchn);
 		nvlist_add_number(
 				di, SNDSTAT_LABEL_RFMTS, ud->rfmts);
 	}
@@ -691,6 +721,8 @@ sndstat_dsp_unpack_nvlist(const nvlist_t *nvlist, struct sndstat_userdev *ud)
 	uint32_t pminrate = 0, pmaxrate = 0;
 	uint32_t rminrate = 0, rmaxrate = 0;
 	uint32_t pfmts = 0, rfmts = 0;
+	uint32_t pminchn = 0, pmaxchn = 0;
+	uint32_t rminchn = 0, rmaxchn = 0;
 	nvlist_t *provider_nvl = NULL;
 	const char *provider;
 
@@ -706,11 +738,15 @@ sndstat_dsp_unpack_nvlist(const nvlist_t *nvlist, struct sndstat_userdev *ud)
 		pminrate = nvlist_get_number(nvlist, SNDSTAT_LABEL_PMINRATE);
 		pmaxrate = nvlist_get_number(nvlist, SNDSTAT_LABEL_PMAXRATE);
 		pfmts = nvlist_get_number(nvlist, SNDSTAT_LABEL_PFMTS);
+		pminchn = dnvlist_get_number(nvlist, SNDSTAT_LABEL_PMINCHN, 0);
+		pmaxchn = dnvlist_get_number(nvlist, SNDSTAT_LABEL_PMAXCHN, 0);
 	}
 	if (rchan != 0) {
 		rminrate = nvlist_get_number(nvlist, SNDSTAT_LABEL_RMINRATE);
 		rmaxrate = nvlist_get_number(nvlist, SNDSTAT_LABEL_RMAXRATE);
 		rfmts = nvlist_get_number(nvlist, SNDSTAT_LABEL_RFMTS);
+		rminchn = dnvlist_get_number(nvlist, SNDSTAT_LABEL_RMINCHN, 0);
+		rmaxchn = dnvlist_get_number(nvlist, SNDSTAT_LABEL_RMAXCHN, 0);
 	}
 
 	provider = dnvlist_get_string(nvlist, SNDSTAT_LABEL_PROVIDER, "");
@@ -737,6 +773,10 @@ sndstat_dsp_unpack_nvlist(const nvlist_t *nvlist, struct sndstat_userdev *ud)
 	ud->rmaxrate = rmaxrate;
 	ud->pfmts = pfmts;
 	ud->rfmts = rfmts;
+	ud->pminrate = pminchn;
+	ud->pmaxrate = pmaxchn;
+	ud->rminrate = rminchn;
+	ud->rmaxrate = rmaxchn;
 	ud->provider_nvl = provider_nvl;
 	return (0);
 }
