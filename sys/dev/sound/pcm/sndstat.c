@@ -362,7 +362,7 @@ sndstat_get_caps(struct snddev_info *d, bool play, uint32_t *min_rate,
 }
 
 static int
-sndstat_build_sound4_nvlist(struct snddev_info *d, nvlist_t **dip)
+sndstat_build_sound4_nvlist(struct snddev_info *d, nvlist_t **dip, bool is_default)
 {
 	uint32_t maxrate, minrate, fmts;
 	nvlist_t *di = NULL, *sound4di = NULL;
@@ -409,6 +409,7 @@ sndstat_build_sound4_nvlist(struct snddev_info *d, nvlist_t **dip)
 	    sound4di, SNDSTAT_LABEL_SOUND4_BITPERFECT, d->flags & SD_F_BITPERFECT);
 	nvlist_add_number(sound4di, SNDSTAT_LABEL_SOUND4_PVCHAN, d->pvchancount);
 	nvlist_add_number(sound4di, SNDSTAT_LABEL_SOUND4_RVCHAN, d->rvchancount);
+	nvlist_add_bool(sound4di, SNDSTAT_LABEL_SOUND4_IS_DEFAULT, is_default);
 	nvlist_move_nvlist(di, SNDSTAT_LABEL_PROVIDER_INFO, sound4di);
 	sound4di = NULL;
 	PCM_RELEASE_QUICK(d);
@@ -492,7 +493,9 @@ sndstat_create_devs_nvlist(nvlist_t **nvlp)
 	nvlist_t *nvl;
 	struct sndstat_entry *ent;
 	struct sndstat_file *pf;
+	int defunit;
 
+	defunit = snd_unit;
 	nvl = nvlist_create(0);
 	if (nvl == NULL)
 		return (ENOMEM);
@@ -507,7 +510,8 @@ sndstat_create_devs_nvlist(nvlist_t **nvlp)
 		if (!PCM_REGISTERED(d))
 			continue;
 
-		err = sndstat_build_sound4_nvlist(d, &di);
+		err = sndstat_build_sound4_nvlist(d, &di,
+		    defunit == device_get_unit(ent->dev));
 		if (err)
 			goto done;
 

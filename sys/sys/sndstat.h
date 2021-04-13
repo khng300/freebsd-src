@@ -70,6 +70,7 @@ struct sndstat_nvlbuf_arg {
 #define SNDSTAT_LABEL_SOUND4_BITPERFECT	"bitperfect"
 #define SNDSTAT_LABEL_SOUND4_PVCHAN	"pvchan"
 #define SNDSTAT_LABEL_SOUND4_RVCHAN	"rvchan"
+#define SNDSTAT_LABEL_SOUND4_IS_DEFAULT	"is_default"
 
 #define SNDSTAT_REFRESH_DEVS	_IO('D', 100)
 #define SNDSTAT_GET_DEVS	_IOWR('D', 101, struct sndstat_nvlbuf_arg)
