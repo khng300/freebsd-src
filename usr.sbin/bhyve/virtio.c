@@ -73,10 +73,25 @@ __FBSDID("$FreeBSD$");
  */
 #define	DEV_SOFTC(vs) ((void *)(vs))
 
+SET_DECLARE(virtio_emu_set, struct virtio_consts);
+
 static uint64_t	vi_modern_pci_read(struct virtio_softc *vs, int vcpu,
 		    int baridx, uint64_t offset, int size);
 static void	vi_modern_pci_write(struct virtio_softc *vs, int vcpu,
 		    int baridx, uint64_t offset, int size, uint64_t value);
+
+struct virtio_consts *
+vi_emul_finddev(const char *name)
+{
+	struct virtio_consts **pp, *p;
+
+	SET_FOREACH(pp, virtio_emu_set) {
+		p = *pp;
+		if (!strcmp(p->vc_name, name))
+			return (p);
+	}
+	return (NULL);
+}
 
 /*
  * Link a virtio_softc to its constants, the device softc, and

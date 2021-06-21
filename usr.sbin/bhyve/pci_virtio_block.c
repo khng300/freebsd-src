@@ -109,6 +109,7 @@ _Static_assert(VTBLK_RINGSZ <= BLOCKIF_RING_MAX, "Each ring entry must be able t
  */
 #define	VTBLK_MAX_DISCARD_SECT	((16 << 20) / VTBLK_BSIZE)	/* 16 MiB */
 
+
 /*
  * Config space "registers"
  */
@@ -183,6 +184,7 @@ struct virtio_blk_discard_write_zeroes {
 	} flags;
 };
 
+
 /*
  * Per-device softc
  */
@@ -211,6 +213,7 @@ static struct virtio_consts vtblk_vi_consts = {
 	"vtblk",		/* our name */
 	1,			/* we support 1 virtqueue */
 	sizeof(struct vtblk_config),	/* config reg size */
+	NULL,
 	pci_vtblk_reset,	/* reset */
 	pci_vtblk_notify,	/* device-wide qnotify */
 	pci_vtblk_cfgread,	/* read PCI config */
@@ -220,7 +223,6 @@ static struct virtio_consts vtblk_vi_consts = {
 	VTBLK_S_HOSTCAPS,	/* our capabilities (modern) */
 	true,			/* Enable legacy */
 	true,			/* Enable modern */
-	2,			/* PCI BAR# for modern */
 #ifdef BHYVE_SNAPSHOT
 	pci_vtblk_pause,	/* pause blockif threads */
 	pci_vtblk_resume,	/* resume blockif threads */

@@ -206,6 +206,7 @@ vring_size_aligned(u_int qsz)
 
 struct vmctx;
 struct pci_devinst;
+struct virtio_xport;
 struct vqueue_info;
 struct vm_snapshot_meta;
 
@@ -280,6 +281,11 @@ struct virtio_softc {
 	struct virtio_pci_cfg *vs_pcicfg;	/* PCI configuration access
 						   cap */
 	int	vs_ncfgs;		/* Number of PCI configurations */
+	struct virtio_xport *vs_xport;
+};
+
+struct virtio_xport {
+	struct virtio_softc *vs_sc;
 };
 
 #define	VS_LOCK(vs)							\
@@ -298,6 +304,7 @@ struct virtio_consts {
 	const char *vc_name;		/* name of driver (for diagnostics) */
 	int	vc_nvq;			/* number of virtual queues */
 	size_t	vc_cfgsize;		/* size of dev-specific config regs */
+	int	(*vc_init)(void *);	/* called on virtual device init */
 	void	(*vc_reset)(void *);	/* called on virtual device reset */
 	void	(*vc_qnotify)(void *, struct vqueue_info *);
 					/* called on QNOTIFY if no VQ notify */
@@ -314,11 +321,13 @@ struct virtio_consts {
 	bool	vc_en_legacy;		/* enable legacy */
 	bool	vc_en_modern;		/* enable modern */
 	char	vc_modern_pcibar;	/* PCI BAR# for modern */
+	size_t	vc_sc_size;		/* softc size */
 	void	(*vc_pause)(void *);	/* called to pause device activity */
 	void	(*vc_resume)(void *);	/* called to resume device activity */
 	int	(*vc_snapshot)(void *, struct vm_snapshot_meta *);
 				/* called to save / restore device state */
 };
+#define VIRTIO_EMUL_SET(x)   DATA_SET(virtio_emu_set, x);
 
 /*
  * Data structure allocated (statically) per virtual queue.
@@ -492,6 +501,7 @@ struct vi_req {
 	unsigned int idx;	/* ring index */
 };
 
+struct virtio_consts	*vi_emul_finddev(const char *name);
 void	vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
 			void *dev_softc, struct pci_devinst *pi,
 			struct vqueue_info *queues);
