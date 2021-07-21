@@ -1,4 +1,0 @@
-.\" $FreeBSD$
-Do not build the
-.Xr gcov 1
-tool.

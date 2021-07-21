@@ -1,7 +1,0 @@
-# $FreeBSD$
-
-include GENERIC
-
-ident   GENERIC-KASAN
-
-options 	KASAN

@@ -1,4 +1,0 @@
-.\" $FreeBSD$
-Do not build
-.Xr autofs 5
-related programs, libraries, and kernel modules.

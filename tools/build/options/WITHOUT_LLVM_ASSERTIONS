@@ -1,2 +1,0 @@
-.\" $FreeBSD$
-Disable debugging assertions in LLVM.

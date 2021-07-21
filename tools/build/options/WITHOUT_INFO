@@ -1,4 +1,0 @@
-.\" $FreeBSD$
-Do not make or install
-.Xr info 5
-files.

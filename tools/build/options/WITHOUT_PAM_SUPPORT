@@ -1,5 +1,0 @@
-.\" $FreeBSD$
-Build some programs without PAM support, particularly
-.Xr ftpd 8
-and
-.Xr ppp 8 .
