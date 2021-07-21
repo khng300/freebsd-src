@@ -162,6 +162,7 @@ static struct virtio_consts vtinput_vi_consts = {
 	"vtinput",		       /* our name */
 	VTINPUT_MAXQ,		       /* we support 1 virtqueue */
 	sizeof(struct vtinput_config), /* config reg size */
+	NULL,
 	pci_vtinput_reset,	       /* reset */
 	NULL,			       /* device-wide qnotify -- not used */
 	pci_vtinput_cfgread,	       /* read virtio config */

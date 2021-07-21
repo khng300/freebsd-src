@@ -63,11 +63,15 @@ vi_pci_init(struct vmctx *ctx, struct pci_devinst *pi, nvlist_t *nvl)
 
 	c = vi_emul_finddev(pi->pi_d->pe_emu);
 	assert(c);
-	if (c->vc_init(sc) != 0)
+	sc->vs_feat_legacy.features = c->vc_hv_caps_legacy;
+	sc->vs_feat_legacy.enabled = c->vc_en_legacy;
+	sc->vs_feat_modern.features = c->vc_hv_caps_modern;
+	sc->vs_feat_modern.enabled = c->vc_en_modern;
+	vi_softc_linkup(sc, c, sc, pi, NULL);
+	if (c->vc_init(sc, nvl) != 0)
 		return;
 
 	sc = calloc(1, c->vc_sc_size);
-	vi_softc_linkup(sc, c, sc, pi, NULL);
 	if (vi_intr_init(sc, 1, fbsdrun_virtio_msix()) != 0) {
 		free(sc);
 		return;

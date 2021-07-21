@@ -87,6 +87,7 @@ static struct virtio_consts vtrnd_vi_consts = {
 	"vtrnd",		/* our name */
 	1,			/* we support 1 virtqueue */
 	0,			/* config reg size */
+	NULL,
 	pci_vtrnd_reset,	/* reset */
 	pci_vtrnd_notify,	/* device-wide qnotify */
 	NULL,			/* read virtio config */

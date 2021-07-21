@@ -37,6 +37,8 @@
 
 #include <machine/atomic.h>
 
+#include <sys/nv.h>
+
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtio_ring.h>
 #include <dev/virtio/pci/virtio_pci_var.h>
@@ -270,6 +272,10 @@ struct virtio_softc {
 	int	vs_flags;		/* VIRTIO_* flags from above */
 	pthread_mutex_t *vs_mtx;	/* POSIX mutex, if any */
 	struct pci_devinst *vs_pi;	/* PCI device instance */
+	struct {
+		bool enabled;
+		uint64_t features;
+	} vs_feat_legacy, vs_feat_modern;
 	uint64_t vs_negotiated_caps;	/* negotiated capabilities */
 	struct vqueue_info *vs_queues;	/* one per vc_nvq */
 	int	vs_curq;		/* current queue */
@@ -281,7 +287,6 @@ struct virtio_softc {
 	struct virtio_pci_cfg *vs_pcicfg;	/* PCI configuration access
 						   cap */
 	int	vs_ncfgs;		/* Number of PCI configurations */
-	struct virtio_xport *vs_xport;
 };
 
 struct virtio_xport {
@@ -304,7 +309,7 @@ struct virtio_consts {
 	const char *vc_name;		/* name of driver (for diagnostics) */
 	int	vc_nvq;			/* number of virtual queues */
 	size_t	vc_cfgsize;		/* size of dev-specific config regs */
-	int	(*vc_init)(void *);	/* called on virtual device init */
+	int	(*vc_init)(void *, nvlist_t *);	/* called on virtual device init */
 	void	(*vc_reset)(void *);	/* called on virtual device reset */
 	void	(*vc_qnotify)(void *, struct vqueue_info *);
 					/* called on QNOTIFY if no VQ notify */

@@ -172,6 +172,7 @@ static struct virtio_consts vtcon_vi_consts = {
 	"vtcon",		/* our name */
 	VTCON_MAXQ,		/* we support VTCON_MAXQ virtqueues */
 	sizeof(struct pci_vtcon_config), /* config reg size */
+	NULL,
 	pci_vtcon_reset,	/* reset */
 	NULL,			/* device-wide qnotify */
 	pci_vtcon_cfgread,	/* read virtio config */

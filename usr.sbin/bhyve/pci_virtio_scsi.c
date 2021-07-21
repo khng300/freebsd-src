@@ -251,6 +251,7 @@ static struct virtio_consts vtscsi_vi_consts = {
 	"vtscsi",				/* our name */
 	VTSCSI_MAXQ,				/* we support 2+n virtqueues */
 	sizeof(struct pci_vtscsi_config),	/* config reg size */
+	NULL,
 	pci_vtscsi_reset,			/* reset */
 	NULL,					/* device-wide qnotify */
 	pci_vtscsi_cfgread,			/* read virtio config */

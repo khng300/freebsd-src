@@ -151,6 +151,7 @@ static struct virtio_consts vtnet_vi_consts = {
 	"vtnet",		/* our name */
 	VTNET_MAXQ - 1,		/* we currently support 2 virtqueues */
 	sizeof(struct virtio_net_config), /* config reg size */
+	NULL,
 	pci_vtnet_reset,	/* reset */
 	NULL,			/* device-wide qnotify -- not used */
 	pci_vtnet_cfgread,	/* read PCI config */

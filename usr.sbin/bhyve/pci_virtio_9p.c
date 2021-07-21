@@ -108,6 +108,7 @@ static struct virtio_consts vt9p_vi_consts = {
 	"vt9p",			/* our name */
 	1,			/* we support 1 virtqueue */
 	VT9P_CONFIGSPACESZ,	/* config reg size */
+	NULL,
 	pci_vt9p_reset,		/* reset */
 	pci_vt9p_notify,	/* device-wide qnotify */
 	pci_vt9p_cfgread,	/* read virtio config */
