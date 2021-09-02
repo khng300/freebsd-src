@@ -374,6 +374,7 @@ MAN=	accept_filter.9 \
 	vhold.9 \
 	vinvalbuf.9 \
 	vm_fault_prefault.9 \
+	vm_fault_quick_hold_pages.9 \
 	vm_map.9 \
 	vm_map_check_protection.9 \
 	vm_map_delete.9 \
@@ -2316,6 +2317,7 @@ MLINKS+=vmem.9 vmem_add.9 \
 	vmem.9 vmem_free.9 \
 	vmem.9 vmem_xalloc.9 \
 	vmem.9 vmem_xfree.9
+MLINKS+=vm_fault_quick_hold_pages.9 vm_page_unhold_pages.9
 MLINKS+=vm_map_lock.9 vm_map_lock_downgrade.9 \
 	vm_map_lock.9 vm_map_lock_read.9 \
 	vm_map_lock.9 vm_map_lock_upgrade.9 \
