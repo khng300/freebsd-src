@@ -1295,20 +1295,52 @@ zfs_file_fsync(zfs_file_t *fp, int flags)
 }
 
 /*
- * fallocate - allocate or free space on disk
+ * space - allocate or free space on disk
  *
  * fp - file pointer
- * mode (non-standard options for hole punching etc)
+ * cmd - operation command
  * offset - offset to start allocating or freeing from
  * len - length to free / allocate
+ * flags - must be 0 for the time being
  *
  * OPTIONAL
  */
 int
-zfs_file_fallocate(zfs_file_t *fp, int mode, loff_t offset, loff_t len)
+zfs_file_space(zfs_file_t *fp, int cmd, loff_t offset, loff_t len, int flags)
 {
-#ifdef __linux__
-	return (fallocate(fp->f_fd, mode, offset, len));
+#if defined(__linux__)
+	int mode = 0;
+	int rc;
+
+	if (flags != 0)
+		return (EINVAL);
+
+	switch (cmd) {
+	case ZFS_SPACE_C_ALLOC:
+		break;
+	case ZFS_SPACE_C_FREE:
+		mode |= FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE:
+	default:
+		return (EINVAL);
+	}
+
+	rc = fallocate(fp->f_fd, mode, offset, len);
+	if (rc != 0)
+		return (errno);
+	return (0);
+#elif defined(__FreeBSD__) && __FreeBSD_version >= 1400032
+	struct spacectl_range sr;
+	int rc;
+
+	if (cmd != ZFS_SPACE_C_FREE || flags != 0)
+		return (EINVAL);
+
+	sr.r_offset = offset;
+	sr.r_len = len;
+	rc = fspacectl(fp->f_fd, SPACECTL_DEALLOC, &sr, 0, &sr);
+	if (rc != 0)
+		return (errno);
+	return (0);
 #else
 	return (EOPNOTSUPP);
 #endif

@@ -297,3 +297,26 @@ zfs_file_unlink(const char *fnamep)
 #endif
 	return (SET_ERROR(rc));
 }
+
+/*
+ * space - allocate or free space on disk
+ *
+ * fp - file pointer
+ * cmd - operation command
+ * offset - offset to start allocating or freeing from
+ * len - length to free / allocate
+ * flags - must be 0 for the time being
+ *
+ * OPTIONAL
+ */
+int
+zfs_file_space(zfs_file_t *fp, int cmd, loff_t offset, loff_t len, int flags)
+{
+	struct thread *td = curthread;
+
+	if (cmd != ZFS_SPACE_C_FREE || flags != 0)
+		return (EINVAL);
+
+	return (fo_fspacectl(fp, SPACECTL_DEALLOC, &offset, &len, flags,
+	    td->td_ucred, td));
+}

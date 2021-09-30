@@ -40,6 +40,9 @@ typedef struct zfs_file_attr {
 	mode_t		zfa_mode;	/* file type */
 } zfs_file_attr_t;
 
+#define ZFS_SPACE_C_ALLOC	(0x1)	/* alloc space */
+#define ZFS_SPACE_C_FREE	(0x2)	/* free space */
+
 int zfs_file_open(const char *path, int flags, int mode, zfs_file_t **fp);
 void zfs_file_close(zfs_file_t *fp);
 
@@ -53,7 +56,8 @@ int zfs_file_pread(zfs_file_t *fp, void *buf, size_t len, loff_t off,
 int zfs_file_seek(zfs_file_t *fp, loff_t *offp, int whence);
 int zfs_file_getattr(zfs_file_t *fp, zfs_file_attr_t *zfattr);
 int zfs_file_fsync(zfs_file_t *fp, int flags);
-int zfs_file_fallocate(zfs_file_t *fp, int mode, loff_t offset, loff_t len);
+int zfs_file_space(zfs_file_t *fp, int cmd, loff_t offset, loff_t len,
+    int flags);
 loff_t zfs_file_off(zfs_file_t *fp);
 int zfs_file_unlink(const char *);
 

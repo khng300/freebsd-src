@@ -328,23 +328,40 @@ zfs_file_fsync(zfs_file_t *filp, int flags)
 }
 
 /*
- * fallocate - allocate or free space on disk
+ * space - allocate or free space on disk
  *
  * fp - file pointer
- * mode (non-standard options for hole punching etc)
+ * cmd - operation command
  * offset - offset to start allocating or freeing from
  * len - length to free / allocate
+ * flags - must be 0 for the time being
  *
  * OPTIONAL
  */
 int
-zfs_file_fallocate(zfs_file_t *fp, int mode, loff_t offset, loff_t len)
+zfs_file_space(zfs_file_t *fp, int cmd, loff_t offset, loff_t len, int flags)
 {
+	int mode = 0;
+	int error = EOPNOTSUPP;
+	int fstrans;
+
+	if (flags != 0)
+		return (EINVAL);
+
+	switch (cmd) {
+	case ZFS_SPACE_C_ALLOC:
+		break;
+	case ZFS_SPACE_C_FREE:
+		mode |= FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE:
+	default:
+		return (EINVAL);
+	}
+
 	/*
 	 * May enter XFS which generates a warning when PF_FSTRANS is set.
 	 * To avoid this the flag is cleared over vfs_sync() and then reset.
 	 */
-	int fstrans = __spl_pf_fstrans_check();
+	fstrans = __spl_pf_fstrans_check();
 	if (fstrans)
 		current->flags &= ~(__SPL_PF_FSTRANS);
 
@@ -352,7 +369,6 @@ zfs_file_fallocate(zfs_file_t *fp, int mode, loff_t offset, loff_t len)
 	 * When supported by the underlying file system preferentially
 	 * use the fallocate() callback to preallocate the space.
 	 */
-	int error = EOPNOTSUPP;
 	if (fp->f_op->fallocate)
 		error = fp->f_op->fallocate(fp, mode, offset, len);
 
