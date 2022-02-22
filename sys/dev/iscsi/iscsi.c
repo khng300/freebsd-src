@@ -38,6 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/endian.h>
 #include <sys/eventhandler.h>
 #include <sys/file.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/lock.h>
@@ -45,7 +46,10 @@ __FBSDID("$FreeBSD$");
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
 #include <sys/module.h>
+#include <sys/queue.h>
 #include <sys/socket.h>
+#include <sys/socketvar.h>
+#include <sys/sockio.h>
 #include <sys/sockopt.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
@@ -65,13 +69,40 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/iscsi/icl.h>
 #include <dev/iscsi/icl_wrappers.h>
+#include <dev/iscsi/iscsi_ibft.h>
 #include <dev/iscsi/iscsi_ioctl.h>
 #include <dev/iscsi/iscsi_proto.h>
 #include <dev/iscsi/iscsi.h>
 
-#ifdef ICL_KERNEL_PROXY
+#include <net/if.h>
+#include <net/if_var.h>
+#include <net/if_dl.h>
+#include <net/route.h>
+#include <net/route/route_ctl.h>
+
+#include <netinet/in.h>
+#include <netinet/in_var.h>
+#include <netinet6/nd6.h>
+
 #include <sys/socketvar.h>
-#endif
+
+/*
+ * Boot session configuration.
+ */
+struct iscsi_boot_session_conf {
+	char 			isc_initiator[ISCSI_NAME_LEN];
+	struct sockaddr_storage	isc_initiator_sa;
+	char			isc_initiator_alias[ISCSI_ALIAS_LEN];
+	char 			isc_target[ISCSI_NAME_LEN];
+	struct sockaddr_storage	isc_target_sa;
+	int			isc_auth_type;
+	char			isc_user[ISCSI_NAME_LEN];
+	char			isc_secret[ISCSI_SECRET_LEN];
+	char			isc_mutual_user[ISCSI_NAME_LEN];
+	char			isc_mutual_secret[ISCSI_SECRET_LEN];
+	int			isc_ping_timeout;
+	int			isc_login_timeout;
+};
 
 #ifdef ICL_KERNEL_PROXY
 FEATURE(iscsi_kernel_proxy, "iSCSI initiator built with ICL_KERNEL_PROXY");
@@ -85,10 +116,9 @@ static struct iscsi_softc	*sc;
 
 SYSCTL_NODE(_kern, OID_AUTO, iscsi, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "iSCSI initiator");
-static int debug = 1;
+int iscsi_debug = 1;
 SYSCTL_INT(_kern_iscsi, OID_AUTO, debug, CTLFLAG_RWTUN,
-    &debug, 0, "Enable debug messages");
-
+    &iscsi_debug, 0, "Enable debug messages");
 static int ping_timeout = 5;
 SYSCTL_INT(_kern_iscsi, OID_AUTO, ping_timeout, CTLFLAG_RWTUN, &ping_timeout,
     0, "Timeout for ping (NOP-Out) requests, in seconds");
@@ -108,48 +138,11 @@ static int fail_on_shutdown = 1;
 SYSCTL_INT(_kern_iscsi, OID_AUTO, fail_on_shutdown, CTLFLAG_RWTUN,
     &fail_on_shutdown, 0, "Fail disconnected sessions on shutdown");
 
-static MALLOC_DEFINE(M_ISCSI, "iSCSI", "iSCSI initiator");
+MALLOC_DEFINE(M_ISCSI, "iSCSI", "iSCSI initiator");
 static uma_zone_t iscsi_outstanding_zone;
 
 #define	CONN_SESSION(X)	((struct iscsi_session *)X->ic_prv0)
 #define	PDU_SESSION(X)	(CONN_SESSION(X->ip_conn))
-
-#define	ISCSI_DEBUG(X, ...)						\
-	do {								\
-		if (debug > 1) 						\
-			printf("%s: " X "\n", __func__, ## __VA_ARGS__);\
-	} while (0)
-
-#define	ISCSI_WARN(X, ...)						\
-	do {								\
-		if (debug > 0) {					\
-			printf("WARNING: %s: " X "\n",			\
-			    __func__, ## __VA_ARGS__);			\
-		}							\
-	} while (0)
-
-#define	ISCSI_SESSION_DEBUG(S, X, ...)					\
-	do {								\
-		if (debug > 1) {					\
-			printf("%s: %s (%s): " X "\n",			\
-			    __func__, S->is_conf.isc_target_addr,	\
-			    S->is_conf.isc_target, ## __VA_ARGS__);	\
-		}							\
-	} while (0)
-
-#define	ISCSI_SESSION_WARN(S, X, ...)					\
-	do {								\
-		if (debug > 0) {					\
-			printf("WARNING: %s (%s): " X "\n",		\
-			    S->is_conf.isc_target_addr,			\
-			    S->is_conf.isc_target, ## __VA_ARGS__);	\
-		}							\
-	} while (0)
-
-#define ISCSI_SESSION_LOCK(X)		mtx_lock(&X->is_lock)
-#define ISCSI_SESSION_UNLOCK(X)		mtx_unlock(&X->is_lock)
-#define ISCSI_SESSION_LOCK_ASSERT(X)	mtx_assert(&X->is_lock, MA_OWNED)
-#define ISCSI_SESSION_LOCK_ASSERT_NOT(X) mtx_assert(&X->is_lock, MA_NOTOWNED)
 
 static int	iscsi_ioctl(struct cdev *dev, u_long cmd, caddr_t arg,
 		    int mode, struct thread *td);
@@ -167,6 +160,7 @@ static void	iscsi_pdu_handle_nop_in(struct icl_pdu *response);
 static void	iscsi_pdu_handle_scsi_response(struct icl_pdu *response);
 static void	iscsi_pdu_handle_task_response(struct icl_pdu *response);
 static void	iscsi_pdu_handle_data_in(struct icl_pdu *response);
+static void	iscsi_pdu_handle_login_response(struct icl_pdu *response);
 static void	iscsi_pdu_handle_logout_response(struct icl_pdu *response);
 static void	iscsi_pdu_handle_r2t(struct icl_pdu *response);
 static void	iscsi_pdu_handle_async_message(struct icl_pdu *response);
@@ -181,6 +175,7 @@ static struct iscsi_outstanding	*iscsi_outstanding_add(struct iscsi_session *is,
 		    uint32_t *initiator_task_tagp);
 static void	iscsi_outstanding_remove(struct iscsi_session *is,
 		    struct iscsi_outstanding *io);
+static void	iscsi_boot_login_thread(void *);
 
 static bool
 iscsi_pdu_prepare(struct icl_pdu *request)
@@ -412,13 +407,11 @@ iscsi_maintenance_thread_reconnect(struct iscsi_session *is)
 	is->is_reconnecting = false;
 	is->is_login_phase = false;
 
-#ifdef ICL_KERNEL_PROXY
 	if (is->is_login_pdu != NULL) {
 		icl_pdu_free(is->is_login_pdu);
 		is->is_login_pdu = NULL;
 	}
 	cv_signal(&is->is_login_cv);
-#endif
 
 	if (fail_on_disconnection) {
 		ISCSI_SESSION_DEBUG(is, "connection failed, destroying devices");
@@ -437,15 +430,25 @@ iscsi_maintenance_thread_reconnect(struct iscsi_session *is)
 		return;
 	}
 
-	/*
-	 * Request immediate reconnection from iscsid(8).
-	 */
-	//ISCSI_SESSION_DEBUG(is, "waking up iscsid(8)");
-	is->is_waiting_for_iscsid = true;
-	strlcpy(is->is_reason, "Waiting for iscsid(8)", sizeof(is->is_reason));
-	is->is_timeout = 0;
-	ISCSI_SESSION_UNLOCK(is);
-	cv_signal(&is->is_softc->sc_cv);
+	if (!is->is_boot_session) {
+		/*
+		* Request immediate reconnection from iscsid(8).
+		*/
+		//ISCSI_SESSION_DEBUG(is, "waking up iscsid(8)");
+		is->is_waiting_for_iscsid = true;
+		strlcpy(is->is_reason, "Waiting for iscsid(8)",
+		    sizeof(is->is_reason));
+		is->is_timeout = 0;
+		ISCSI_SESSION_UNLOCK(is);
+		cv_signal(&is->is_softc->sc_cv);
+	} else {
+		is->is_trigger_kern_login = true;
+		strlcpy(is->is_reason, "Boot session connecting",
+		    sizeof(is->is_reason));
+		is->is_timeout = 0;
+		ISCSI_SESSION_UNLOCK(is);
+		cv_signal(&is->is_boot_login.bl_login_cv);
+	}
 }
 
 static void
@@ -458,6 +461,13 @@ iscsi_maintenance_thread_terminate(struct iscsi_session *is)
 	TAILQ_REMOVE(&sc->sc_sessions, is, is_next);
 	sx_xunlock(&sc->sc_lock);
 
+	ISCSI_SESSION_LOCK(is);
+	if (is->is_boot_session && is->is_boot_login.bl_login_thread != NULL) {
+		cv_signal(&is->is_boot_login.bl_login_cv);
+		cv_wait(&is->is_boot_login.bl_login_cv, &is->is_lock);
+	}
+	ISCSI_SESSION_UNLOCK(is);
+
 	icl_conn_close(is->is_conn);
 	callout_drain(&is->is_callout);
 
@@ -465,13 +475,11 @@ iscsi_maintenance_thread_terminate(struct iscsi_session *is)
 
 	KASSERT(is->is_terminating, ("is_terminating == false"));
 
-#ifdef ICL_KERNEL_PROXY
 	if (is->is_login_pdu != NULL) {
 		icl_pdu_free(is->is_login_pdu);
 		is->is_login_pdu = NULL;
 	}
 	cv_signal(&is->is_login_cv);
-#endif
 
 	iscsi_session_cleanup(is, true);
 
@@ -485,9 +493,9 @@ iscsi_maintenance_thread_terminate(struct iscsi_session *is)
 	icl_conn_free(is->is_conn);
 	mtx_destroy(&is->is_lock);
 	cv_destroy(&is->is_maintenance_cv);
-#ifdef ICL_KERNEL_PROXY
 	cv_destroy(&is->is_login_cv);
-#endif
+	if (is->is_boot_session)
+		cv_destroy(&is->is_boot_login.bl_login_cv);
 
 	ISCSI_SESSION_DEBUG(is, "terminated");
 	free(is, M_ISCSI);
@@ -752,7 +760,6 @@ iscsi_receive_callback(struct icl_pdu *response)
 
 	iscsi_pdu_update_statsn(response);
 
-#ifdef ICL_KERNEL_PROXY
 	if (is->is_login_phase) {
 		if (is->is_login_pdu == NULL)
 			is->is_login_pdu = response;
@@ -762,7 +769,6 @@ iscsi_receive_callback(struct icl_pdu *response)
 		cv_signal(&is->is_login_cv);
 		return;
 	}
-#endif
 
 	/*
 	 * The handling routine is responsible for freeing the PDU
@@ -786,6 +792,10 @@ iscsi_receive_callback(struct icl_pdu *response)
 		iscsi_pdu_handle_data_in(response);
 		/* Session lock dropped inside. */
 		ISCSI_SESSION_LOCK_ASSERT_NOT(is);
+		break;
+	case ISCSI_BHS_OPCODE_LOGIN_RESPONSE:
+		iscsi_pdu_handle_login_response(response);
+		ISCSI_SESSION_UNLOCK(is);
 		break;
 	case ISCSI_BHS_OPCODE_LOGOUT_RESPONSE:
 		iscsi_pdu_handle_logout_response(response);
@@ -1207,6 +1217,14 @@ iscsi_pdu_handle_data_in(struct icl_pdu *response)
 }
 
 static void
+iscsi_pdu_handle_login_response(struct icl_pdu *response)
+{
+
+	ISCSI_SESSION_DEBUG(PDU_SESSION(response), "login response");
+	icl_pdu_free(response);
+}
+
+static void
 iscsi_pdu_handle_logout_response(struct icl_pdu *response)
 {
 
@@ -1461,6 +1479,60 @@ iscsi_ioctl_daemon_wait(struct iscsi_softc *sc,
 }
 
 static int
+iscsi_prepare_sim_post_login(struct iscsi_session *is)
+{
+	int error;
+
+	if (is->is_sim != NULL) {
+		/*
+		 * When reconnecting, there already is SIM allocated for the
+		 * session.
+		 */
+		KASSERT(is->is_simq_frozen, ("reconnect without frozen simq"));
+		ISCSI_SESSION_LOCK(is);
+		ISCSI_SESSION_DEBUG(is, "releasing");
+		is->is_simq_frozen = false;
+		xpt_release_simq(is->is_sim, 1);
+		ISCSI_SESSION_UNLOCK(is);
+	} else {
+		ISCSI_SESSION_LOCK(is);
+		is->is_devq = cam_simq_alloc(is->is_conn->ic_maxtags);
+		if (is->is_devq == NULL) {
+			ISCSI_SESSION_UNLOCK(is);
+			ISCSI_SESSION_WARN(is, "failed to allocate simq");
+			return (ENOMEM);
+		}
+
+		is->is_sim = cam_sim_alloc(iscsi_action, NULL, "iscsi",
+			is, is->is_id /* unit */, &is->is_lock,
+			1, is->is_conn->ic_maxtags, is->is_devq);
+		if (is->is_sim == NULL) {
+			ISCSI_SESSION_UNLOCK(is);
+			ISCSI_SESSION_WARN(is, "failed to allocate SIM");
+			cam_simq_free(is->is_devq);
+			return (ENOMEM);
+		}
+
+		if (xpt_bus_register(is->is_sim, NULL, 0) != 0) {
+			ISCSI_SESSION_UNLOCK(is);
+			ISCSI_SESSION_WARN(is, "failed to register bus");
+			return (ENOMEM);
+		}
+
+		error = xpt_create_path(&is->is_path, /*periph*/NULL,
+			cam_sim_path(is->is_sim), CAM_TARGET_WILDCARD,
+			CAM_LUN_WILDCARD);
+		if (error != CAM_REQ_CMP) {
+			ISCSI_SESSION_UNLOCK(is);
+			ISCSI_SESSION_WARN(is, "failed to create path");
+			return (ENOMEM);
+		}
+		ISCSI_SESSION_UNLOCK(is);
+	}
+	return (0);
+}
+
+static int
 iscsi_ioctl_daemon_handoff(struct iscsi_softc *sc,
     struct iscsi_daemon_handoff *handoff)
 {
@@ -1557,55 +1629,10 @@ iscsi_ioctl_daemon_handoff(struct iscsi_softc *sc,
 
 	sx_sunlock(&sc->sc_lock);
 
-	if (is->is_sim != NULL) {
-		/*
-		 * When reconnecting, there already is SIM allocated for the session.
-		 */
-		KASSERT(is->is_simq_frozen, ("reconnect without frozen simq"));
-		ISCSI_SESSION_LOCK(is);
-		ISCSI_SESSION_DEBUG(is, "releasing");
-		is->is_simq_frozen = false;
-		xpt_release_simq(is->is_sim, 1);
-		ISCSI_SESSION_UNLOCK(is);
-
-	} else {
-		ISCSI_SESSION_LOCK(is);
-		is->is_devq = cam_simq_alloc(ic->ic_maxtags);
-		if (is->is_devq == NULL) {
-			ISCSI_SESSION_UNLOCK(is);
-			ISCSI_SESSION_WARN(is, "failed to allocate simq");
-			iscsi_session_terminate(is);
-			return (ENOMEM);
-		}
-
-		is->is_sim = cam_sim_alloc(iscsi_action, NULL, "iscsi",
-		    is, is->is_id /* unit */, &is->is_lock,
-		    1, ic->ic_maxtags, is->is_devq);
-		if (is->is_sim == NULL) {
-			ISCSI_SESSION_UNLOCK(is);
-			ISCSI_SESSION_WARN(is, "failed to allocate SIM");
-			cam_simq_free(is->is_devq);
-			iscsi_session_terminate(is);
-			return (ENOMEM);
-		}
-
-		if (xpt_bus_register(is->is_sim, NULL, 0) != 0) {
-			ISCSI_SESSION_UNLOCK(is);
-			ISCSI_SESSION_WARN(is, "failed to register bus");
-			iscsi_session_terminate(is);
-			return (ENOMEM);
-		}
-
-		error = xpt_create_path(&is->is_path, /*periph*/NULL,
-		    cam_sim_path(is->is_sim), CAM_TARGET_WILDCARD,
-		    CAM_LUN_WILDCARD);
-		if (error != CAM_REQ_CMP) {
-			ISCSI_SESSION_UNLOCK(is);
-			ISCSI_SESSION_WARN(is, "failed to create path");
-			iscsi_session_terminate(is);
-			return (ENOMEM);
-		}
-		ISCSI_SESSION_UNLOCK(is);
+	error = iscsi_prepare_sim_post_login(is);
+	if (error) {
+		iscsi_session_terminate(is);
+		return (error);
 	}
 
 	return (0);
@@ -1914,9 +1941,7 @@ iscsi_ioctl_session_add(struct iscsi_softc *sc, struct iscsi_session_add *isa)
 	STAILQ_INIT(&is->is_postponed);
 	mtx_init(&is->is_lock, "iscsi_lock", NULL, MTX_DEF);
 	cv_init(&is->is_maintenance_cv, "iscsi_mt");
-#ifdef ICL_KERNEL_PROXY
 	cv_init(&is->is_login_cv, "iscsi_login");
-#endif
 
 	/*
 	 * Set some default values, from RFC 3720, section 12.
@@ -1976,6 +2001,165 @@ iscsi_ioctl_session_add(struct iscsi_softc *sc, struct iscsi_session_add *isa)
 }
 
 static bool
+iscsi_is_addr_v4mapped(uint8_t *addr)
+{
+	uint32_t *addr4 = (uint32_t *)addr;
+
+	if (be32toh(addr4[0]) == 0 && be32toh(addr4[1]) == 0 &&
+	    be32toh(addr4[2]) == 0x0000ffffU)
+		return (true);
+	return (false);
+}
+
+static void
+iscsi_sin2p(char *dst, const struct sockaddr_storage *sa, bool is_tgt __unused)
+{
+	const struct sockaddr_in *sin;
+	const struct sockaddr_in6 *sin6;
+
+	KASSERT(sa->ss_family == AF_INET || sa->ss_family == AF_INET6,
+	    ("%s: Bogus %s address family", __func__,
+	    is_tgt ? "target" : "initiator"));
+	if (sa->ss_family == AF_INET) {
+		KASSERT(sa->ss_len == sizeof(*sin),
+		    ("%s: Bogus initiator sockaddr size", __func__));
+		sin = (const struct sockaddr_in *)sa;
+		inet_ntop(AF_INET, &sin->sin_addr, dst, ISCSI_ADDR_LEN);
+	} else {
+		KASSERT(sa->ss_len == sizeof(*sin6),
+		    ("%s: Bogus initiator sockaddr size", __func__));
+		sin6 = (const struct sockaddr_in6 *)sa;
+		inet_ntop(AF_INET6, &sin6->sin6_addr, dst, ISCSI_ADDR_LEN);
+	}
+}
+
+static void
+iscsi_fill_is_conf(struct iscsi_session_conf *dst,
+    const struct iscsi_boot_session_conf *src)
+{
+	bzero(dst, sizeof(*dst));
+	strlcpy(dst->isc_initiator, src->isc_initiator,
+	    sizeof(dst->isc_initiator));
+	iscsi_sin2p(dst->isc_initiator_addr, &src->isc_initiator_sa, false);
+	strlcpy(dst->isc_target, src->isc_target, sizeof(dst->isc_target));
+	iscsi_sin2p(dst->isc_target_addr, &src->isc_target_sa, true);
+	if (src->isc_auth_type == IBFT_CHAP_CHAP ||
+	    src->isc_auth_type == IBFT_CHAP_MUTUAL) {
+		strlcpy(dst->isc_user, src->isc_user, sizeof(dst->isc_user));
+		strlcpy(dst->isc_secret, src->isc_secret,
+		    sizeof(dst->isc_secret));
+		if (src->isc_auth_type == IBFT_CHAP_MUTUAL) {
+			strlcpy(dst->isc_mutual_user, src->isc_mutual_user,
+			    sizeof(dst->isc_mutual_user));
+			strlcpy(dst->isc_mutual_secret, src->isc_mutual_secret,
+			    sizeof(dst->isc_mutual_secret));
+		}
+	}
+	dst->isc_discovery = 0;
+	dst->isc_enable = 1;
+	dst->isc_ping_timeout = src->isc_ping_timeout;
+	dst->isc_login_timeout = src->isc_login_timeout;
+}
+
+static int
+iscsi_boot_session_add(struct iscsi_softc *sc,
+    struct iscsi_boot_session_conf *conf)
+{
+	struct iscsi_session *is, *is2;
+	int error;
+
+	is = malloc(sizeof(*is), M_ISCSI, M_ZERO | M_WAITOK);
+	iscsi_fill_is_conf(&is->is_conf, conf);
+
+	sx_xlock(&sc->sc_lock);
+
+	/*
+	 * Prevent duplicates.
+	 */
+	TAILQ_FOREACH(is2, &sc->sc_sessions, is_next) {
+		if (!!is->is_conf.isc_discovery !=
+		    !!is2->is_conf.isc_discovery)
+			continue;
+
+		if (strcmp(is->is_conf.isc_target_addr,
+		    is2->is_conf.isc_target_addr) != 0)
+			continue;
+
+		if (is->is_conf.isc_discovery == 0 &&
+		    strcmp(is->is_conf.isc_target,
+		    is2->is_conf.isc_target) != 0)
+			continue;
+
+		sx_xunlock(&sc->sc_lock);
+		free(is, M_ISCSI);
+		return (EBUSY);
+	}
+
+	is->is_boot_login.bl_from_ss = conf->isc_initiator_sa;
+	is->is_boot_login.bl_to_ss = conf->isc_target_sa;
+
+	/*
+	 * XXX: There should be no offload and iSER for now.
+	 * Offloading is actually desirable.
+	 */
+	is->is_conn = icl_new_conn(is->is_conf.isc_offload,
+	    is->is_conf.isc_iser, "iscsi", &is->is_lock);
+	if (is->is_conn == NULL) {
+		sx_xunlock(&sc->sc_lock);
+		free(is, M_ISCSI);
+		return (EINVAL);
+	}
+	is->is_conn->ic_receive = iscsi_receive_callback;
+	is->is_conn->ic_error = iscsi_error_callback;
+	is->is_conn->ic_prv0 = is;
+	TAILQ_INIT(&is->is_outstanding);
+	STAILQ_INIT(&is->is_postponed);
+	mtx_init(&is->is_lock, "iscsi_lock", NULL, MTX_DEF);
+	cv_init(&is->is_maintenance_cv, "iscsi_mt");
+	cv_init(&is->is_login_cv, "iscsi_login");
+	is->is_boot_session = true;
+	cv_init(&is->is_boot_login.bl_login_cv, "iscsi_boot_login");
+
+	/*
+	 * Set some default values, from RFC 3720, section 12.
+	 *
+	 * These values are updated by the handoff IOCTL, but are
+	 * needed prior to the handoff to support sending the ISER
+	 * login PDU.
+	 */
+	is->is_conn->ic_max_recv_data_segment_length = 8192;
+	is->is_conn->ic_max_send_data_segment_length = 8192;
+	is->is_max_burst_length = 262144;
+	is->is_first_burst_length = 65536;
+
+	is->is_softc = sc;
+	sc->sc_last_session_id++;
+	is->is_id = sc->sc_last_session_id;
+	is->is_isid[0] = 0x80; /* RFC 3720, 10.12.5: 10b, "Random" ISID. */
+	arc4rand(&is->is_isid[1], 5, 0);
+	is->is_tsih = 0;
+	callout_init(&is->is_callout, 1);
+
+	error = kthread_add(iscsi_maintenance_thread, is, NULL, NULL, 0, 0, "iscsimt");
+	if (error != 0) {
+		ISCSI_SESSION_WARN(is, "kthread_add(9) failed with error %d", error);
+		sx_xunlock(&sc->sc_lock);
+		return (error);
+	}
+
+	callout_reset(&is->is_callout, 1 * hz, iscsi_callout, is);
+	TAILQ_INSERT_TAIL(&sc->sc_sessions, is, is_next);
+
+	is->is_trigger_kern_login = true;
+	error = kthread_add(iscsi_boot_login_thread, is, NULL,
+	    &is->is_boot_login.bl_login_thread, 0, 0, "iscsiblt");
+	if (error != 0)
+		ISCSI_SESSION_WARN(is, "kthread_add(9) failed with error %d", error);
+	sx_xunlock(&sc->sc_lock);
+	return (error);
+}
+
+static bool
 iscsi_session_conf_matches(unsigned int id1, const struct iscsi_session_conf *c1,
     unsigned int id2, const struct iscsi_session_conf *c2)
 {
@@ -2003,8 +2187,10 @@ iscsi_ioctl_session_remove(struct iscsi_softc *sc,
 	sx_xlock(&sc->sc_lock);
 	TAILQ_FOREACH_SAFE(is, &sc->sc_sessions, is_next, tmp) {
 		ISCSI_SESSION_LOCK(is);
+		/* Do not remove boot sessions when wildcard matching */ 
 		if (iscsi_session_conf_matches(is->is_id, &is->is_conf,
-		    isr->isr_session_id, &isr->isr_conf)) {
+		    isr->isr_session_id, &isr->isr_conf) &&
+		    !(isr->isr_session_id == 0 && is->is_boot_session)) {
 			found = true;
 			iscsi_session_logout(is);
 			iscsi_session_terminate(is);
@@ -2616,6 +2802,444 @@ iscsi_shutdown_post(struct iscsi_softc *sc)
 	}
 }
 
+static void
+iscsi_boot_login_thread(void *arg)
+{
+	struct sockaddr_storage from_ss, to_ss;
+	struct sockaddr *from_sap;
+	struct iscsi_kernel_handoff handoff;
+	struct iscsi_kernel_login login;
+	struct iscsi_session *is;
+	struct icl_conn *ic;
+	int error;
+
+	is = (struct iscsi_session *)arg;
+	KASSERT(is->is_boot_session, ("%s: launched on user session",
+	    __func__));
+
+	ISCSI_SESSION_LOCK(is);
+	ic = is->is_conn;
+	do {
+		while (!is->is_trigger_kern_login && !is->is_terminating)
+			cv_wait(&is->is_boot_login.bl_login_cv, &is->is_lock);
+		if (is->is_terminating)
+			break;
+
+		is->is_trigger_kern_login = false;
+		is->is_login_phase = true;
+		memcpy(&from_ss, &is->is_boot_login.bl_from_ss,
+		    sizeof(from_ss));
+		memcpy(&to_ss, &is->is_boot_login.bl_to_ss, sizeof(to_ss));
+		is->is_statsn = 0;
+		is->is_cmdsn = 0;
+		is->is_expcmdsn = 0;
+		is->is_maxcmdsn = 0;
+		is->is_timeout = 0;
+		is->is_ping_timeout = is->is_conf.isc_ping_timeout;
+		if (is->is_ping_timeout < 0)
+			is->is_ping_timeout = ping_timeout;
+		is->is_login_timeout = is->is_conf.isc_login_timeout;
+		if (is->is_login_timeout < 0)
+			is->is_login_timeout = login_timeout;
+		is->is_reason[0] = '\0';
+
+		/*
+		 * Digests are always disabled during login phase.
+		 */
+		ic->ic_header_crc32c = false;
+		ic->ic_data_crc32c = false;
+
+		memset(&handoff, 0, sizeof(handoff));
+		handoff.ikh_header_digest = ISCSI_DIGEST_NONE;
+		handoff.ikh_data_digest = ISCSI_DIGEST_NONE;
+		handoff.ikh_immediate_data = true;
+		ic->ic_max_recv_data_segment_length =
+		    handoff.ikh_max_recv_data_segment_length = 8192;
+		ic->ic_max_send_data_segment_length =
+		    handoff.ikh_max_send_data_segment_length = 8192;
+		handoff.ikh_max_burst_length = 262144;
+		handoff.ikh_first_burst_length = 65536;
+		handoff.ikh_tsid = 0;
+		ISCSI_SESSION_UNLOCK(is);
+
+		if (from_ss.ss_len != 0)
+			from_sap = (struct sockaddr *)&from_ss;
+		else
+			from_sap = NULL;
+		error = icl_conn_connect(ic, to_ss.ss_family, SOCK_STREAM, 0,
+		    from_sap, (struct sockaddr *)&to_ss);
+		if (error != 0) {
+			ISCSI_SESSION_LOCK(is);
+			snprintf(is->is_reason, sizeof(is->is_reason),
+			    "Failed to connect to endpoint. error: %d", error);
+			ISCSI_SESSION_DEBUG(is, "%s", is->is_reason);
+			ISCSI_SESSION_UNLOCK(is);
+			goto notify;
+		}
+		login.ikl_is = is;
+		error = icl_limits(ic->ic_offload, ic->ic_iser, &login.ikl_idl);
+		if (error != 0) {
+			ISCSI_SESSION_LOCK(is);
+			snprintf(is->is_reason, sizeof(is->is_reason),
+			    "icl_limits for offload \"%s\" "
+			    "failed with error %d", is->is_conf.isc_offload,
+			    error);
+			ISCSI_SESSION_UNLOCK(is);
+			goto notify;
+		}
+
+		ISCSI_SESSION_LOCK(is);
+		if (is->is_terminating)
+			break;
+		do {
+			error = iscsi_login(&login, &handoff);
+		} while (error == EAGAIN);
+		if (error != 0) {
+			ISCSI_SESSION_UNLOCK(is);
+			goto notify;
+		}
+
+		strlcpy(is->is_target_alias, handoff.ikh_target_alias,
+		    sizeof(is->is_target_alias));
+		is->is_protocol_level = handoff.ikh_protocol_level;
+		is->is_initial_r2t = handoff.ikh_initial_r2t;
+		is->is_immediate_data = handoff.ikh_immediate_data;
+
+		ic->ic_max_recv_data_segment_length =
+		    handoff.ikh_max_recv_data_segment_length;
+		ic->ic_max_send_data_segment_length =
+		    handoff.ikh_max_send_data_segment_length;
+		is->is_max_burst_length = handoff.ikh_max_burst_length;
+		is->is_first_burst_length = handoff.ikh_first_burst_length;
+
+		if (handoff.ikh_header_digest == ISCSI_DIGEST_CRC32C)
+			ic->ic_header_crc32c = true;
+		else
+			ic->ic_header_crc32c = false;
+		if (handoff.ikh_data_digest == ISCSI_DIGEST_CRC32C)
+			ic->ic_data_crc32c = true;
+		else
+			ic->ic_data_crc32c = false;
+		ic->ic_maxtags = maxtags;
+
+		is->is_cmdsn = 0;
+		is->is_expcmdsn = 0;
+		is->is_maxcmdsn = 0;
+		is->is_waiting_for_iscsid = false;
+		is->is_login_phase = false;
+		is->is_timeout = 0;
+		is->is_ping_timeout = is->is_conf.isc_ping_timeout;
+		if (is->is_ping_timeout < 0)
+			is->is_ping_timeout = ping_timeout;
+		is->is_login_timeout = is->is_conf.isc_login_timeout;
+		if (is->is_login_timeout < 0)
+			is->is_login_timeout = login_timeout;
+		is->is_connected = true;
+		is->is_reason[0] = '\0';
+		ISCSI_SESSION_UNLOCK(is);
+
+		error = iscsi_prepare_sim_post_login(is);
+		if (error) {
+			ISCSI_SESSION_LOCK(is);
+			iscsi_session_terminate(is);
+			break;
+		}
+
+notify:
+		ISCSI_SESSION_LOCK(is);
+		cv_signal(&is->is_boot_login.bl_login_cv);
+	} while (1);
+
+	is->is_boot_login.bl_login_thread = NULL;
+	cv_signal(&is->is_boot_login.bl_login_cv);
+	ISCSI_SESSION_UNLOCK(is);
+	kthread_exit();
+}
+
+static u_int
+iscsi_match_lladdr(void *arg, struct sockaddr_dl *sadl, u_int count)
+{
+	struct ibft_i_nic_s *nic;
+
+	nic = (struct ibft_i_nic_s *)arg;
+	if (bcmp(nic->ns_mac, LLADDR(sadl), sizeof(nic->ns_mac)) == 0)
+		return (1);
+	return (0);
+}
+
+static int
+iscsi_ibft_configure_nic(struct ibft_i_nic_s *nic)
+{
+	struct sockaddr_in gwsa, gwmasksa, zerodstsa;
+	struct sockaddr_in6 gwsa6, gwmasksa6, zerodstsa6;
+	struct sockaddr *gwsap, *gwmasksap, *zerodstsap;
+	struct in_aliasreq ifra;
+	struct in6_aliasreq ifra6;
+	struct rt_addrinfo info;
+	struct rib_cmd_info rc;
+	struct ifnet *ifp;
+	struct socket *so;
+	struct thread *td;
+	struct ifreq ifr;
+	void *ifrap;
+	int prefixlen;
+	u_long ioc;
+	bool is_v6;
+	int error;
+	int i;
+
+	td = curthread;
+	prefixlen = nic->ns_prefixlen;
+	ifrap = &ifra6;
+	ioc = SIOCAIFADDR_IN6;
+	is_v6 = !iscsi_is_addr_v4mapped(nic->ns_ip);
+	bzero(&gwsa, sizeof(gwsa));
+	bzero(&gwsa6, sizeof(gwsa6));
+	bzero(&gwmasksa, sizeof(gwmasksa));
+	bzero(&gwmasksa6, sizeof(gwmasksa6));
+	bzero(&zerodstsa, sizeof(zerodstsa));
+	bzero(&zerodstsa6, sizeof(zerodstsa6));
+	gwsap = sin6tosa(&gwsa6);
+	gwmasksap = sin6tosa(&gwmasksa6);
+	zerodstsap = sin6tosa(&zerodstsa6);
+	bzero(&ifra6, sizeof(ifra6));
+	bzero(&ifra, sizeof(ifra));
+	bzero(&ifr, sizeof(ifr));
+
+	CURVNET_SET(TD_TO_VNET(td));
+	IFNET_RLOCK();
+	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
+		if (if_foreach_lladdr(ifp, iscsi_match_lladdr, nic) != 0) {
+			strlcpy(ifr.ifr_name, ifp->if_xname,
+			    sizeof(ifr.ifr_name));
+			break;
+		}
+	}
+	IFNET_RUNLOCK();
+	CURVNET_RESTORE();
+	if (ifr.ifr_name[0] == '\0') {
+		ISCSI_WARN("No matching MAC for NIC%hhu."
+		    "MAC wanted: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+		    nic->ns_idx, nic->ns_mac[0], nic->ns_mac[1], nic->ns_mac[2],
+		    nic->ns_mac[3], nic->ns_mac[4], nic->ns_mac[5]);
+		return (ENODEV);
+	}
+
+	error = socreate(AF_INET, &so, SOCK_DGRAM, 0, td->td_ucred, td);
+	if (error != 0) {
+		ISCSI_WARN("Failed creating socket");
+		return (error);
+	}
+	ISCSI_DEBUG("Finished creating socket for addr setting");
+
+	/* Bring up the interface so we can set addr */
+	error = ifioctl(so, SIOCGIFFLAGS, (caddr_t)&ifr, td);
+	if (error) {
+		ISCSI_WARN("ifioctl SIOCGIFFLAGS\n");
+		goto out;
+	}
+	ISCSI_DEBUG("Finished getting interface flags");
+	ifr.ifr_flags |= IFF_UP;
+	error = ifioctl(so, SIOCSIFFLAGS, (caddr_t)&ifr, td);
+	if (error) {
+		ISCSI_WARN("ifioctl SIOCSIFFLAGS\n");
+		goto out;
+	}
+	ISCSI_DEBUG("Finished bringing up interface");
+
+	ifra6.ifra_addr.sin6_len = sizeof(ifra6.ifra_addr);
+	ifra6.ifra_addr.sin6_family = AF_INET6;
+	memcpy(&ifra6.ifra_addr.sin6_addr, nic->ns_ip,
+	    sizeof(ifra6.ifra_addr.sin6_addr));
+	if (!is_v6) {
+		strlcpy(ifra.ifra_name, ifr.ifr_name,
+		    sizeof(ifra.ifra_name));
+		in6_sin6_2_sin(&ifra.ifra_addr, &ifra6.ifra_addr);
+		ifra.ifra_mask.sin_len = sizeof(ifra.ifra_mask);
+		ifra.ifra_mask.sin_family = AF_INET;
+		if (prefixlen > 32) {
+			error = EINVAL;
+			goto out;
+		}
+		ifra.ifra_mask.sin_addr.s_addr =
+		    htonl(~0 << (32 - prefixlen));
+		bcopy(&ifra.ifra_addr, &ifra.ifra_broadaddr,
+		    sizeof(ifra.ifra_broadaddr));
+		ifra.ifra_broadaddr.sin_addr.s_addr |=
+		    ~ifra.ifra_mask.sin_addr.s_addr;
+		ifrap = &ifra;
+		ioc = SIOCAIFADDR;
+		ISCSI_DEBUG("Interface %s - IP: %hhu.%hhu.%hhu.%hhu. "
+		    "Netmask: %hhu.%hhu.%hhu.%hhu",
+		    ifra.ifra_name,
+		    ((char *)&ifra.ifra_addr.sin_addr.s_addr)[0],
+		    ((char *)&ifra.ifra_addr.sin_addr.s_addr)[1],
+		    ((char *)&ifra.ifra_addr.sin_addr.s_addr)[2],
+		    ((char *)&ifra.ifra_addr.sin_addr.s_addr)[3],
+		    ((char *)&ifra.ifra_mask.sin_addr.s_addr)[0],
+		    ((char *)&ifra.ifra_mask.sin_addr.s_addr)[1],
+		    ((char *)&ifra.ifra_mask.sin_addr.s_addr)[2],
+		    ((char *)&ifra.ifra_mask.sin_addr.s_addr)[3]);
+	} else {
+		strlcpy(ifra6.ifra_name, ifr.ifr_name,
+		    sizeof(ifra6.ifra_name));
+		ifra6.ifra_prefixmask.sin6_len = sizeof(ifra6.ifra_prefixmask);
+		ifra6.ifra_prefixmask.sin6_family = AF_INET6;
+		if (prefixlen > 128) {
+			error = EINVAL;
+			goto out;
+		}
+		for (i = 0; i < prefixlen / 8; i++)
+			ifra6.ifra_prefixmask.sin6_addr.s6_addr[i] = 0xff;
+		if (prefixlen % 8 != 0) {
+			ifra6.ifra_prefixmask.sin6_addr.s6_addr[i] =
+			    ~0 << (8 - (prefixlen % 8));
+		}
+		ifra6.ifra_lifetime.ia6t_expire = 0;
+		ifra6.ifra_lifetime.ia6t_preferred = 0;
+		ifra6.ifra_lifetime.ia6t_vltime = ND6_INFINITE_LIFETIME;
+		ifra6.ifra_lifetime.ia6t_pltime = ND6_INFINITE_LIFETIME;
+	}
+	error = ifioctl(so, ioc, ifrap, td);
+	if (error != 0) {
+		ISCSI_WARN("Failed setting interface addr. error %d",
+		    error);
+		goto out;
+	}
+	ISCSI_DEBUG("Finished addr setting");
+	
+	if (bcmp(nic->ns_gateway, &in6addr_any, sizeof(in6addr_any))) {
+		/*
+		 * Gateway is set in the NIC
+		 */
+
+		gwsa6.sin6_len = sizeof(gwsa);
+		gwsa6.sin6_family = AF_INET6;
+		memcpy(&gwsa6.sin6_addr, nic->ns_ip, sizeof(gwsa6.sin6_addr));
+		gwmasksa6.sin6_len = sizeof(gwsa6);
+		gwmasksa6.sin6_family = AF_INET6;
+		zerodstsa6.sin6_len = sizeof(zerodstsa6);
+		zerodstsa6.sin6_family = AF_INET6;
+		if (!is_v6) {
+			in6_sin6_2_sin(&gwsa, &gwsa6);
+			in6_sin6_2_sin(&gwmasksa, &gwmasksa6);
+			in6_sin6_2_sin(&zerodstsa, &zerodstsa6);
+
+			gwsap = sintosa(&gwsa);
+			gwmasksap = sintosa(&gwmasksa);
+			zerodstsap = sintosa(&zerodstsa);
+		}
+
+		info.rti_flags = RTF_UP | RTF_GATEWAY;
+		info.rti_info[RTAX_DST] = zerodstsap;
+		info.rti_info[RTAX_GATEWAY] = gwsap;
+		info.rti_info[RTAX_NETMASK] = gwmasksap;
+		error = rib_action(RT_DEFAULT_FIB, RTM_ADD, &info, &rc);
+		if (error != 0) {
+			ISCSI_WARN("Failed setting up routing table. error %d",
+			    error);
+			goto out;
+		}
+	}
+out:
+	soclose(so);
+	return (error);
+}
+
+static int
+iscsi_ibft_add_target(struct ibft_i_tgt_s *target)
+{
+	struct iscsi_boot_session_conf *conf;
+	struct sockaddr_in6 srcsa6, dstsa6;
+	struct ibft_i_nic_s *nic;
+	bool is_v4;
+	int error;
+	
+	conf = (struct iscsi_boot_session_conf *)malloc(sizeof(*conf), M_ISCSI,
+	    M_ZERO | M_NOWAIT);
+	if (conf == NULL)
+		return (ENOMEM);
+	nic = &ibft_nics[target->ts_nic_idx];
+	if (!nic->ns_present) {
+		ISCSI_WARN("No target presented in the IBFT table");
+		error = ENODEV;
+		goto out;
+	}
+	is_v4 = iscsi_is_addr_v4mapped(target->ts_ip);
+
+	error = iscsi_ibft_configure_nic(nic);
+	if (error != 0) {
+		ISCSI_WARN("Failed to configure NIC%hhu for iSCSI target%hhu",
+		    target->ts_nic_idx, target->ts_idx);
+		goto out;
+	}
+	ISCSI_DEBUG("Finished configuring NIC%hhu for iSCSI target%hhu",
+	    target->ts_nic_idx, target->ts_idx);
+
+	bzero(&srcsa6, sizeof(srcsa6));
+	srcsa6.sin6_len = sizeof(srcsa6);
+	srcsa6.sin6_family = AF_INET6;
+	memcpy(&srcsa6.sin6_addr, nic->ns_ip, sizeof(nic->ns_ip));
+	if (is_v4) {
+		in6_sin6_2_sin((struct sockaddr_in *)&conf->isc_initiator_sa,
+		    &srcsa6);
+	} else {
+		memcpy(&conf->isc_initiator_sa, &srcsa6, sizeof(srcsa6));
+	}
+
+	iscsi_ibft_getstr(conf->isc_initiator,
+	    sizeof(conf->isc_initiator), ibft_initiator->is_name,
+	    ibft_initiator->is_name_len);
+	iscsi_ibft_getstr(conf->isc_target,
+	    sizeof(conf->isc_target), target->ts_tgt_name,
+	    target->ts_tgt_name_len);
+	bzero(&dstsa6, sizeof(dstsa6));
+	dstsa6.sin6_len = sizeof(dstsa6);
+	dstsa6.sin6_family = AF_INET6;
+	dstsa6.sin6_port = htons(target->ts_port);
+	memcpy(&dstsa6.sin6_addr.s6_addr, target->ts_ip, sizeof(target->ts_ip));
+	if (is_v4) {
+		in6_sin6_2_sin((struct sockaddr_in *)&conf->isc_target_sa,
+		    &dstsa6);
+	} else {
+		memcpy(&conf->isc_target_sa, &dstsa6, sizeof(dstsa6));
+	}
+	conf->isc_auth_type = target->ts_chap_type;
+	iscsi_ibft_getstr(conf->isc_user, sizeof(conf->isc_user),
+	    target->ts_chap_name, target->ts_chap_name_len);
+	iscsi_ibft_getstr(conf->isc_secret, sizeof(conf->isc_secret),
+	    target->ts_chap_secret, target->ts_chap_secret_len);
+	iscsi_ibft_getstr(conf->isc_mutual_user, sizeof(conf->isc_mutual_user),
+	    target->ts_rchap_name, target->ts_rchap_name_len);
+	iscsi_ibft_getstr(conf->isc_mutual_secret,
+	    sizeof(conf->isc_mutual_secret), target->ts_rchap_secret,
+	    target->ts_rchap_secret_len);
+	conf->isc_ping_timeout = -1;
+	conf->isc_login_timeout = -1;
+
+	error = iscsi_boot_session_add(sc, conf);
+	if (error)
+		ISCSI_WARN("Failed to add iSCSI target %s", conf->isc_target);
+	ISCSI_DEBUG("Finished adding iSCSI target %s", conf->isc_target);
+
+out:
+	free(conf, M_ISCSI);
+	return (error);
+}
+
+static void
+iscsi_ibft_sysinit(void *arg __unused)
+{
+	struct ibft_i_tgt_s *target;
+
+	iscsi_ibft_init();
+	TAILQ_FOREACH(target, &ibft_targets_list, ts_entry) {
+		iscsi_ibft_add_target(target);
+	}
+}
+SYSINIT(iscsi_ibft_sysinit, SI_SUB_LAST, SI_ORDER_ANY, iscsi_ibft_sysinit,
+    NULL);
+
 static int
 iscsi_load(void)
 {
@@ -2655,6 +3279,8 @@ iscsi_load(void)
 static int
 iscsi_unload(void)
 {
+
+	iscsi_ibft_fini();
 
 	/* Awaken any threads asleep in iscsi_ioctl(). */
 	sx_xlock(&sc->sc_lock);

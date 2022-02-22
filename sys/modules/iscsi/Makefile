@@ -15,6 +15,13 @@ SRCS+=	bus_if.h
 SRCS+=	device_if.h
 SRCS+=	icl_conn_if.c
 SRCS+=	icl_conn_if.h
+SRCS+=	iscsi_login.c
+SRCS+=	iscsi_keys.c
+SRCS+=	iscsi_chap.c
+SRCS+=	iscsi_base64.c
+SRCS+=	iscsi_ibft.c
+
+SRCS+=	opt_acpi.h
 
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
 CFLAGS+=-DICL_KERNEL_PROXY
