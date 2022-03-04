@@ -2866,12 +2866,21 @@ iscsi_boot_login_thread(void *arg)
 			from_sap = (struct sockaddr *)&from_ss;
 		else
 			from_sap = NULL;
-		error = icl_conn_connect(ic, to_ss.ss_family, SOCK_STREAM, 0,
-		    from_sap, (struct sockaddr *)&to_ss);
+
+#ifdef ICL_KERNEL_PROXY
+		error = icl_conn_connect(ic, to_ss.ss_family,
+		    SOCK_STREAM, 0, from_sap,
+		    (struct sockaddr *)&to_ss);
+		if (error == ENXIO)
+#endif
+			error = icl_soft_proxy_connect(ic, to_ss.ss_family,
+			    SOCK_STREAM, 0, from_sap,
+			    (struct sockaddr *)&to_ss);
 		if (error != 0) {
 			ISCSI_SESSION_LOCK(is);
 			snprintf(is->is_reason, sizeof(is->is_reason),
-			    "Failed to connect to endpoint. error: %d", error);
+			    "Failed to connect to endpoint. error: %d",
+			    error);
 			ISCSI_SESSION_DEBUG(is, "%s", is->is_reason);
 			ISCSI_SESSION_UNLOCK(is);
 			goto notify;
@@ -2891,9 +2900,8 @@ iscsi_boot_login_thread(void *arg)
 		ISCSI_SESSION_LOCK(is);
 		if (is->is_terminating)
 			break;
-		do {
-			error = iscsi_login(&login, &handoff);
-		} while (error == EAGAIN);
+		/* XXX:	Currently redirection is not supported */
+		error = iscsi_login(&login, &handoff);
 		if (error != 0) {
 			ISCSI_SESSION_UNLOCK(is);
 			goto notify;

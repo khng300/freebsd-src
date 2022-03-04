@@ -933,7 +933,8 @@ out:
 }
 
 int
-iscsi_login(struct iscsi_kernel_login *login, struct iscsi_kernel_handoff *handoff)
+iscsi_login(struct iscsi_kernel_login *login,
+    struct iscsi_kernel_handoff *handoff)
 {
 	struct iscsi_session *is;
 	struct icl_drv_limits *idl;
