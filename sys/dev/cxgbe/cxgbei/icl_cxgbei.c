@@ -137,6 +137,7 @@ static icl_conn_pdu_get_data_t	icl_cxgbei_conn_pdu_get_data;
 static icl_conn_pdu_queue_t	icl_cxgbei_conn_pdu_queue;
 static icl_conn_pdu_queue_cb_t	icl_cxgbei_conn_pdu_queue_cb;
 static icl_conn_handoff_t	icl_cxgbei_conn_handoff;
+static icl_conn_handoff_sock_t	icl_cxgbei_conn_handoff_sock;
 static icl_conn_free_t		icl_cxgbei_conn_free;
 static icl_conn_close_t		icl_cxgbei_conn_close;
 static icl_conn_task_setup_t	icl_cxgbei_conn_task_setup;
@@ -154,6 +155,7 @@ static kobj_method_t icl_cxgbei_methods[] = {
 	KOBJMETHOD(icl_conn_pdu_queue, icl_cxgbei_conn_pdu_queue),
 	KOBJMETHOD(icl_conn_pdu_queue_cb, icl_cxgbei_conn_pdu_queue_cb),
 	KOBJMETHOD(icl_conn_handoff, icl_cxgbei_conn_handoff),
+	KOBJMETHOD(icl_conn_handoff_sock, icl_cxgbei_conn_handoff_sock),
 	KOBJMETHOD(icl_conn_free, icl_cxgbei_conn_free),
 	KOBJMETHOD(icl_conn_close, icl_cxgbei_conn_close),
 	KOBJMETHOD(icl_conn_task_setup, icl_cxgbei_conn_task_setup),
@@ -887,53 +889,16 @@ set_ulp_mode_iscsi(struct adapter *sc, struct toepcb *toep, u_int ulp_submode)
  * XXXNP: What happens to the socket's fd reference if the operation is
  * successful, and how does that affect the socket's life cycle?
  */
-int
-icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
+static int
+_icl_cxgbei_conn_handoff_sock(struct icl_conn *ic, struct socket *so)
 {
 	struct icl_cxgbei_conn *icc = ic_to_icc(ic);
 	struct find_ofld_adapter_rr fa;
-	struct file *fp;
-	struct socket *so;
 	struct inpcb *inp;
 	struct tcpcb *tp;
 	struct toepcb *toep;
-	cap_rights_t rights;
 	u_int max_rx_pdu_len, max_tx_pdu_len;
 	int error, max_iso_pdus;
-
-	MPASS(icc->icc_signature == CXGBEI_CONN_SIGNATURE);
-	ICL_CONN_LOCK_ASSERT_NOT(ic);
-
-	/*
-	 * Steal the socket from userland.
-	 */
-	error = fget(curthread, fd,
-	    cap_rights_init_one(&rights, CAP_SOCK_CLIENT), &fp);
-	if (error != 0)
-		return (error);
-	if (fp->f_type != DTYPE_SOCKET) {
-		fdrop(fp, curthread);
-		return (EINVAL);
-	}
-	so = fp->f_data;
-	if (so->so_type != SOCK_STREAM ||
-	    so->so_proto->pr_protocol != IPPROTO_TCP) {
-		fdrop(fp, curthread);
-		return (EINVAL);
-	}
-
-	ICL_CONN_LOCK(ic);
-	if (ic->ic_socket != NULL) {
-		ICL_CONN_UNLOCK(ic);
-		fdrop(fp, curthread);
-		return (EBUSY);
-	}
-	ic->ic_disconnecting = false;
-	ic->ic_socket = so;
-	fp->f_ops = &badfileops;
-	fp->f_data = NULL;
-	fdrop(fp, curthread);
-	ICL_CONN_UNLOCK(ic);
 
 	/* Find the adapter offloading this socket. */
 	fa.sc = NULL;
@@ -1016,6 +981,79 @@ icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
 
 	error = icl_cxgbei_setsockopt(ic, so, max_tx_pdu_len, max_rx_pdu_len);
 out:
+	if (error != 0)
+		icl_cxgbei_conn_close(ic);
+	return (error);
+}
+
+int
+icl_cxgbei_conn_handoff_sock(struct icl_conn *ic, struct socket *so)
+{
+	struct icl_cxgbei_conn *icc = ic_to_icc(ic);
+	int error;
+
+	MPASS(icc->icc_signature == CXGBEI_CONN_SIGNATURE);
+	ICL_CONN_LOCK_ASSERT_NOT(ic);
+
+	ICL_CONN_LOCK(ic);
+	if (ic->ic_socket != NULL) {
+		ICL_CONN_UNLOCK(ic);
+		return (EBUSY);
+	}
+	ic->ic_disconnecting = false;
+	ic->ic_socket = so;
+	ICL_CONN_UNLOCK(ic);
+
+	error = _icl_cxgbei_conn_handoff_sock(ic, so);
+	if (error != 0)
+		icl_cxgbei_conn_close(ic);
+	return (error);
+}
+
+int
+icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
+{
+	struct icl_cxgbei_conn *icc = ic_to_icc(ic);
+	struct file *fp;
+	struct socket *so;
+	cap_rights_t rights;
+	int error;
+
+	MPASS(icc->icc_signature == CXGBEI_CONN_SIGNATURE);
+	ICL_CONN_LOCK_ASSERT_NOT(ic);
+
+	/*
+	 * Steal the socket from userland.
+	 */
+	error = fget(curthread, fd,
+	    cap_rights_init_one(&rights, CAP_SOCK_CLIENT), &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type != DTYPE_SOCKET) {
+		fdrop(fp, curthread);
+		return (EINVAL);
+	}
+	so = fp->f_data;
+	if (so->so_type != SOCK_STREAM ||
+	    so->so_proto->pr_protocol != IPPROTO_TCP) {
+		fdrop(fp, curthread);
+		return (EINVAL);
+	}
+
+	ICL_CONN_LOCK(ic);
+	if (ic->ic_socket != NULL) {
+		ICL_CONN_UNLOCK(ic);
+		fdrop(fp, curthread);
+		return (EBUSY);
+	}
+	ic->ic_disconnecting = false;
+	ic->ic_socket = so;
+	fp->f_ops = &badfileops;
+	fp->f_data = NULL;
+	fdrop(fp, curthread);
+	ICL_CONN_UNLOCK(ic);
+
+	error = _icl_cxgbei_conn_handoff_sock(ic, so);
 	if (error != 0)
 		icl_cxgbei_conn_close(ic);
 	return (error);
