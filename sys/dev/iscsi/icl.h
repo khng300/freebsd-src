@@ -144,9 +144,9 @@ int		icl_register(const char *offload, bool iser, int priority,
 		    struct icl_conn *(*new_conn)(const char *, struct mtx *));
 int		icl_unregister(const char *offload, bool rdma);
 
-#ifdef ICL_KERNEL_PROXY
-
 struct sockaddr;
+
+#ifdef ICL_KERNEL_PROXY
 struct icl_listen;
 
 /*
@@ -160,13 +160,13 @@ int			icl_listen_add(struct icl_listen *il, bool rdma,
 			    struct sockaddr *sa, int portal_id);
 int			icl_listen_remove(struct icl_listen *il, struct sockaddr *sa);
 
+#endif /* ICL_KERNEL_PROXY */
+
 /*
- * Those two are not a public API; only to be used between icl_soft.c
+ * Those are not a public API; only to be used between icl_soft.c, iscsi.c
  * and icl_soft_proxy.c.
  */
-int			icl_soft_handoff_sock(struct icl_conn *ic, struct socket *so);
 int			icl_soft_proxy_connect(struct icl_conn *ic, int domain,
 			    int socktype, int protocol, struct sockaddr *from_sa,
 			    struct sockaddr *to_sa);
-#endif /* ICL_KERNEL_PROXY */
 #endif /* !ICL_H */

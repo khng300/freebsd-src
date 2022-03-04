@@ -134,6 +134,7 @@ static icl_conn_pdu_get_data_t	icl_soft_conn_pdu_get_data;
 static icl_conn_pdu_queue_t	icl_soft_conn_pdu_queue;
 static icl_conn_pdu_queue_cb_t	icl_soft_conn_pdu_queue_cb;
 static icl_conn_handoff_t	icl_soft_conn_handoff;
+static icl_conn_handoff_sock_t	icl_soft_conn_handoff_sock;
 static icl_conn_free_t		icl_soft_conn_free;
 static icl_conn_close_t		icl_soft_conn_close;
 static icl_conn_task_setup_t	icl_soft_conn_task_setup;
@@ -154,6 +155,7 @@ static kobj_method_t icl_soft_methods[] = {
 	KOBJMETHOD(icl_conn_pdu_queue, icl_soft_conn_pdu_queue),
 	KOBJMETHOD(icl_conn_pdu_queue_cb, icl_soft_conn_pdu_queue_cb),
 	KOBJMETHOD(icl_conn_handoff, icl_soft_conn_handoff),
+	KOBJMETHOD(icl_conn_handoff_sock, icl_soft_conn_handoff_sock),
 	KOBJMETHOD(icl_conn_free, icl_soft_conn_free),
 	KOBJMETHOD(icl_conn_close, icl_soft_conn_close),
 	KOBJMETHOD(icl_conn_task_setup, icl_soft_conn_task_setup),
@@ -1496,9 +1498,10 @@ icl_soft_conn_connect(struct icl_conn *ic, int domain, int socktype,
 	return (icl_soft_proxy_connect(ic, domain, socktype, protocol,
 	    from_sa, to_sa));
 }
+#endif /* ICL_KERNEL_PROXY */
 
 int
-icl_soft_handoff_sock(struct icl_conn *ic, struct socket *so)
+icl_soft_conn_handoff_sock(struct icl_conn *ic, struct socket *so)
 {
 	int error;
 
@@ -1519,7 +1522,6 @@ icl_soft_handoff_sock(struct icl_conn *ic, struct socket *so)
 
 	return (error);
 }
-#endif /* ICL_KERNEL_PROXY */
 
 static int
 icl_soft_load(void)

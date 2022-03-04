@@ -106,6 +106,13 @@ icl_conn_handoff(struct icl_conn *ic, int fd)
 	return (ICL_CONN_HANDOFF(ic, fd));
 }
 
+static inline int
+icl_conn_handoff_sock(struct icl_conn *ic, struct socket *so)
+{
+
+	return (ICL_CONN_HANDOFF_SOCK(ic, so));
+}
+
 static inline void
 icl_conn_close(struct icl_conn *ic)
 {

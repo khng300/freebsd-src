@@ -96,6 +96,11 @@ METHOD int handoff {
 	int _fd;
 };
 
+METHOD int handoff_sock {
+	struct icl_conn *_ic;
+	struct socket *so;
+};
+
 METHOD void close {
 	struct icl_conn *_ic;
 };

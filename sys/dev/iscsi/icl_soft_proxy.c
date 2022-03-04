@@ -64,8 +64,6 @@
  * iSCSI Common Layer, kernel proxy part.
  */
 
-#ifdef ICL_KERNEL_PROXY
-
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
@@ -87,6 +85,9 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp.h>
 
 #include <dev/iscsi/icl.h>
+#include <dev/iscsi/icl_wrappers.h>
+
+#ifdef ICL_KERNEL_PROXY
 
 struct icl_listen_sock {
 	TAILQ_ENTRY(icl_listen_sock)	ils_next;
@@ -104,6 +105,8 @@ struct icl_listen	{
 };
 
 static MALLOC_DEFINE(M_ICL_PROXY, "ICL_PROXY", "iSCSI common layer proxy");
+
+#endif /* ICL_KERNEL_PROXY */
 
 int
 icl_soft_proxy_connect(struct icl_conn *ic, int domain, int socktype,
@@ -149,12 +152,14 @@ icl_soft_proxy_connect(struct icl_conn *ic, int domain, int socktype,
 		return (error);
 	}
 
-	error = icl_soft_handoff_sock(ic, so);
+	error = ICL_CONN_HANDOFF_SOCK(ic, so);
 	if (error != 0)
 		soclose(so);
 
 	return (error);
 }
+
+#ifdef ICL_KERNEL_PROXY
 
 struct icl_listen *
 icl_listen_new(void (*accept_cb)(struct socket *, struct sockaddr *, int))
