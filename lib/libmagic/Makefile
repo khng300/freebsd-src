@@ -58,16 +58,12 @@ magic.mgc: magic
 .if ${MACHINE} == "host" || ${MK_DIRDEPS_BUILD} == "no"
 CLEANFILES+=	mkmagic
 DEPENDOBJS+=	mkmagic
+BTOOLSPATH= ${HOST_OBJTOP}/${RELDIR}
 build-tools: mkmagic
 mkmagic: apprentice.c cdf_time.c encoding.c funcs.c magic.c print.c ${INCS} ${BUILD_TOOLS_META}
 	${CC:N${CCACHE_BIN}} ${CFLAGS} -DCOMPILE_ONLY ${LDFLAGS} -o ${.TARGET} \
 	    ${.ALLSRC:N*.h:O:u} ${LDADD}
-
-.endif
-.if ${MK_DIRDEPS_BUILD} == "yes"
-BTOOLSPATH= ${HOST_OBJTOP}/${RELDIR}
-.else
-magic.mgc: mkmagic
+magic.mgc:	mkmagic
 .endif
 
 FILEVER!= awk '$$1 == "\#define" && $$2 == "VERSION" { print $$3; exit }' \
