@@ -1214,13 +1214,13 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
 		VM_OBJECT_WUNLOCK(object);
 		(void)vn_start_write(vp, &mp, V_WAIT);
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		if (syncio && !invalidate && offset == 0 &&
-		    atop(size) == object->size) {
+		if (syncio && !invalidate &&
+		    atop(size) > vm_pageout_page_count) {
 			/*
-			 * If syncing the whole mapping of the file,
-			 * it is faster to schedule all the writes in
-			 * async mode, also allowing the clustering,
-			 * and then wait for i/o to complete.
+			 * If syncing a large portion of the mapping of the
+			 * file, it is faster to schedule all the writes in
+			 * async mode, also allowing the clustering, and then
+			 * wait for i/o to complete.
 			 */
 			flags = 0;
 			fsync_after = TRUE;
